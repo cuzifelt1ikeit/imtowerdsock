@@ -51,12 +51,51 @@ io.on('connection', (socket) => {
 
   console.log(`[connect] ${socket.id}`);
 
-  // MARK: - Auth
+  // MARK: - Auth (with reconnection)
   socket.on('auth', (data, ack) => {
     playerId = data.playerId;
     username = data.username;
     console.log(`[auth] ${username} (${playerId})`);
-    if (ack) ack({ success: true });
+
+    // Check if player was in a room (reconnection)
+    const existingRoom = roomManager.getPlayerRoom(playerId);
+    if (existingRoom) {
+      // Update socket ID
+      const playerInfo = existingRoom.players.get(playerId);
+      if (playerInfo) {
+        playerInfo.socketId = socket.id;
+      }
+      socket.join(existingRoom.code);
+      console.log(`[reconnect] ${username} rejoined room ${existingRoom.code}`);
+
+      if (ack) ack({
+        success: true,
+        reconnected: true,
+        roomCode: existingRoom.code,
+        roomState: existingRoom.state,
+      });
+
+      // Send current state
+      if (existingRoom.state === 'lobby') {
+        socket.emit('lobby_update', existingRoom.tolobbyState());
+      } else if (existingRoom.state === 'playing' && existingRoom.game) {
+        socket.emit('game_started', { playerIds: Array.from(existingRoom.players.keys()) });
+        socket.emit('game_state', existingRoom.game.getState());
+      }
+
+      // Cancel disconnect timer if any
+      if (existingRoom._disconnectTimers?.has(playerId)) {
+        clearTimeout(existingRoom._disconnectTimers.get(playerId));
+        existingRoom._disconnectTimers.delete(playerId);
+        console.log(`[reconnect] Cancelled disconnect timer for ${username}`);
+      }
+
+      // Notify others
+      io.to(existingRoom.code).emit('player_reconnected', { playerId, username });
+      return;
+    }
+
+    if (ack) ack({ success: true, reconnected: false });
   });
 
   // MARK: - Create Room
@@ -205,20 +244,49 @@ io.on('connection', (socket) => {
     });
   });
 
-  // MARK: - Disconnect
+  // MARK: - Disconnect (with reconnection grace period)
   socket.on('disconnect', () => {
     console.log(`[disconnect] ${username || socket.id}`);
-    if (playerId) {
-      const room = roomManager.getPlayerRoom(playerId);
-      if (room) {
-        const code = room.code;
-        roomManager.leaveRoom(playerId);
+    if (!playerId) return;
 
-        const updatedRoom = roomManager.getRoom(code);
-        if (updatedRoom) {
-          io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
-          io.to(code).emit('player_disconnected', { playerId, username });
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room) return;
+
+    const code = room.code;
+
+    if (room.state === 'playing') {
+      // Game in progress — give 60 seconds to reconnect
+      io.to(code).emit('player_disconnected', { playerId, username, gracePeriod: 60 });
+      console.log(`[disconnect] ${username} has 60s to reconnect to room ${code}`);
+
+      const disconnectTimer = setTimeout(() => {
+        // Check if they reconnected (socket ID would have changed)
+        const currentRoom = roomManager.getPlayerRoom(playerId);
+        if (currentRoom && currentRoom.code === code) {
+          const playerInfo = currentRoom.players.get(playerId);
+          if (playerInfo && playerInfo.socketId === socket.id) {
+            // Still the old socket — they didn't reconnect
+            console.log(`[disconnect] ${username} timed out, removing from room ${code}`);
+            roomManager.leaveRoom(playerId);
+            const updatedRoom = roomManager.getRoom(code);
+            if (updatedRoom) {
+              io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
+              io.to(code).emit('player_left', { playerId, username });
+            }
+          }
         }
+      }, 60000);
+
+      // Store timer so we can cancel on reconnect
+      if (!room._disconnectTimers) room._disconnectTimers = new Map();
+      room._disconnectTimers.set(playerId, disconnectTimer);
+    } else {
+      // In lobby — remove immediately
+      roomManager.leaveRoom(playerId);
+      const updatedRoom = roomManager.getRoom(code);
+      if (updatedRoom) {
+        io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
+        io.to(code).emit('player_disconnected', { playerId, username });
       }
     }
   });
