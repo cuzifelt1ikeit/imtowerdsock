@@ -15,6 +15,10 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 // Set wanderer weights on Enemy prototype
 Enemy.setWandererWeights(config);
 
+// Laravel API config
+const LARAVEL_API = process.env.LARAVEL_API_URL || 'https://imptowerdef.on-forge.com/api';
+const SERVER_KEY = process.env.GAME_SERVER_KEY || '';
+
 const PORT = process.env.PORT || 3001;
 const server = http.createServer((req, res) => {
   // Health check endpoint
@@ -120,10 +124,55 @@ io.on('connection', (socket) => {
       io.to(room.code).emit('game_state', state);
     };
 
-    room.game.onGameOver = (results) => {
+    room.game.onGameOver = async (results) => {
       room.state = 'finished';
       io.to(room.code).emit('game_over', results);
       console.log(`[game:over] Room ${room.code} — Wave ${results.waveReached}`);
+
+      // Submit results to Laravel
+      try {
+        const playerData = [];
+        for (const [pid, stats] of Object.entries(results.players)) {
+          // Resolve player_id from the room's player info
+          const playerInfo = room.players.get(pid);
+          playerData.push({
+            player_id: parseInt(pid),
+            total_kills: stats.totalKills,
+            total_leaked: stats.totalLeaked,
+            total_earned: stats.totalEarned,
+            bunkers_built: stats.bunkersBuilt,
+            troops_purchased: stats.troopsPurchased,
+            troops_upgraded: stats.troopsUpgraded,
+          });
+        }
+
+        const body = JSON.stringify({
+          room_code: results.roomId,
+          mode: 'cooperative',
+          wave_reached: results.waveReached,
+          shared_hp_remaining: Math.max(0, results.sharedHp),
+          duration_seconds: results.durationSeconds,
+          status: 'completed',
+          players: playerData,
+        });
+
+        const resp = await fetch(`${LARAVEL_API}/mp/results`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Server-Key': SERVER_KEY,
+          },
+          body,
+        });
+
+        const data = await resp.json();
+        console.log(`[api] Results submitted — Game #${data.game_id}, Group best: Wave ${data.group_best_wave}`);
+
+        // Broadcast group best back to players
+        io.to(room.code).emit('group_best_updated', { bestWave: data.group_best_wave });
+      } catch (err) {
+        console.error(`[api] Failed to submit results:`, err.message);
+      }
     };
 
     console.log(`[game:start] Room ${room.code} — ${room.players.size} players`);
