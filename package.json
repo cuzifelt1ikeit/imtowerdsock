@@ -1,0 +1,18 @@
+{
+  "name": "imtowerdsock",
+  "version": "1.0.0",
+  "description": "Impossible Tower Defense — Multiplayer Socket Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "socket.io": "^4.8.3",
+    "uuid": "^13.0.0"
+  }
+}

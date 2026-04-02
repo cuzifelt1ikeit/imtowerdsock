@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "grid": {
+    "cols": 9,
+    "rows": 20
+  },
+  "player": {
+    "startCash": 500,
+    "maxHp": 100,
+    "bunkerCost": 50
+  },
+  "enemies": {
+    "grunt": {
+      "hp": 50,
+      "speed": 1.5,
+      "size": 0.6,
+      "leakDamage": 1
+    },
+    "runner": {
+      "hp": 25,
+      "speed": 3.0,
+      "size": 0.45,
+      "leakDamage": 2
+    },
+    "tank": {
+      "hp": 200,
+      "speed": 0.8,
+      "size": 0.8,
+      "leakDamage": 5
+    },
+    "swarm": {
+      "hp": 15,
+      "speed": 2.0,
+      "size": 0.35,
+      "leakDamage": 0.5
+    },
+    "boss": {
+      "hp": 500,
+      "speed": 0.6,
+      "size": 0.95,
+      "leakDamage": 20
+    }
+  },
+  "waves": {
+    "betweenDuration": 15,
+    "spawnInterval": 0.4,
+    "bossEveryN": 10,
+    "bossHpMultiplier": 1.5,
+    "hpScalePerWave": 1.20,
+    "speedScaleAfterWave": 5,
+    "speedScaleRate": 0.02,
+    "earlyBonusPerSecond": 5,
+    "pathfinderBase": 0.1,
+    "pathfinderPerWave": 0.025,
+    "pathfinderCap": 0.85,
+    "introWaves": {
+      "1": { "type": "grunt", "count": 10 },
+      "2": { "type": "runner", "count": 12 },
+      "3": { "type": "tank", "count": 5 },
+      "4": { "type": "swarm", "count": 25 },
+      "5": { "type": "boss", "count": 1 }
+    },
+    "scaledWaveBaseCount": 15,
+    "scaledWavePerWave": 4
+  },
+  "units": {
+    "machinegun": {
+      "name": "Machine Gun",
+      "shortName": "MG",
+      "cost": 30,
+      "damage": 5,
+      "fireRate": 6,
+      "range": 2.5,
+      "splash": false,
+      "splashRadius": 0,
+      "dot": false,
+      "dotDamage": 0,
+      "dotDuration": 0
+    },
+    "shotgun": {
+      "name": "Shotgun",
+      "shortName": "SG",
+      "cost": 45,
+      "damage": 12,
+      "fireRate": 2,
+      "range": 2.0,
+      "splash": true,
+      "splashRadius": 0.8,
+      "dot": false,
+      "dotDamage": 0,
+      "dotDuration": 0
+    },
+    "sniper": {
+      "name": "Sniper",
+      "shortName": "SN",
+      "cost": 50,
+      "damage": 40,
+      "fireRate": 0.8,
+      "range": 4.0,
+      "splash": false,
+      "splashRadius": 0,
+      "dot": false,
+      "dotDamage": 0,
+      "dotDuration": 0
+    },
+    "flamethrower": {
+      "name": "Flamethrower",
+      "shortName": "FT",
+      "cost": 60,
+      "damage": 8,
+      "fireRate": 4,
+      "range": 1.5,
+      "splash": true,
+      "splashRadius": 1.0,
+      "dot": true,
+      "dotDamage": 3,
+      "dotDuration": 2
+    }
+  },
+  "upgrades": {
+    "maxTier": 5,
+    "damageScale": [1, 1.4, 1.9, 2.5, 3.2],
+    "fireRateScale": [1, 1.15, 1.3, 1.45, 1.6],
+    "rangeScale": [1, 1.1, 1.2, 1.3, 1.4],
+    "costMultipliers": [0, 1.0, 1.5, 2.0, 2.5]
+  },
+  "bounty": {
+    "budgetBase": 50,
+    "budgetPerWave": 10
+  },
+  "wanderer": {
+    "bias": 0.7,
+    "interval": 0.05,
+    "weightDown": 100,
+    "weightSide": 30,
+    "weightUp": 5
+  }
+}
