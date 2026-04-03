@@ -78,9 +78,6 @@ class WaveManager {
       }
     }
 
-    // Clean up dead enemies that have been processed
-    this.enemies = this.enemies.filter(e => e.alive || !e.deathHandled);
-
     // Check wave cleared
     if (this.waveActive && this.spawnQueue.length === 0) {
       const alive = this.enemies.some(e => e.alive);
@@ -88,6 +85,8 @@ class WaveManager {
         this.waveActive = false;
         this.waveCleared = true;
         this.betweenWaveTimer = this.betweenWaveDuration;
+        // Clean up dead enemies between waves
+        this.enemies = [];
         if (this.onWaveCleared) this.onWaveCleared(this.waveNumber);
       }
     }
