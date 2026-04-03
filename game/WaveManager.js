@@ -78,6 +78,9 @@ class WaveManager {
       }
     }
 
+    // Clean up dead enemies that have been processed
+    this.enemies = this.enemies.filter(e => e.alive || !e.deathHandled);
+
     // Check wave cleared
     if (this.waveActive && this.spawnQueue.length === 0) {
       const alive = this.enemies.some(e => e.alive);
@@ -172,19 +175,19 @@ class WaveManager {
     const enemy = new Enemy(id, spawnCol, 0, data.hp, data.speed, data.type, data.isPathfinder, this.config);
 
     if (data.isPathfinder) {
-      const path = this.grid.findPath(spawnCol, 0, null);
+      let path = this.grid.findPath(spawnCol, 0, null);
+      if (!path) {
+        // Try other columns
+        for (let c = 0; c < this.grid.cols; c++) {
+          path = this.grid.findPath(c, 0, null);
+          if (path) break;
+        }
+      }
       if (path) {
         enemy.setPath(path);
         this.enemies.push(enemy);
-      } else {
-        const centerCol = Math.floor(this.grid.cols / 2);
-        const fallback = this.grid.findPath(centerCol, 0, null);
-        if (fallback) {
-          enemy.x = fallback[0].col;
-          enemy.y = fallback[0].row;
-          enemy.setPath(fallback);
-          this.enemies.push(enemy);
-        }
+        // No valid path at all — skip this enemy
+        console.log(`[wave] No path found for enemy at col ${spawnCol}`);
       }
     } else {
       enemy.x = spawnCol;
