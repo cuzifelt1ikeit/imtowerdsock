@@ -235,16 +235,18 @@ class GameInstance {
           console.log(`[wave] Game started by player ${playerId}`);
           return { success: true, bonus: 0 };
         }
-        // Between waves — skip countdown for ALL lanes
+        // Between waves — skip countdown for ALL lanes, bonus to ALL players
         if (this._betweenWaveTimer > 0) {
           const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
           this._betweenWaveTimer = 0;
           this._waveQueued = true;
           if (bonus > 0) {
-            lane.cash += bonus;
-            lane.totalEarned += bonus;
+            for (const l of this.lanes.values()) {
+              l.cash += bonus;
+              l.totalEarned += bonus;
+            }
           }
-          console.log(`[wave] Send early by player ${playerId}, bonus $${bonus}`);
+          console.log(`[wave] Send early by player ${playerId}, bonus $${bonus} to all players`);
           return { success: true, bonus };
         }
         return { success: true, bonus: 0 };
