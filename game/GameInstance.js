@@ -131,13 +131,15 @@ class GameInstance {
       const targetId = availableLanes[Math.floor(Math.random() * availableLanes.length)];
       const targetLane = this.lanes.get(targetId);
 
-      // Transfer enemy with remaining HP
+      // Transfer enemy with remaining HP and leak tracking key
+      const transferHp = enemy.hp > 0 ? enemy.hp : this.config.enemies[enemy.type].hp;
       targetLane.receiveEnemy({
         type: enemy.type,
-        hp: enemy.hp > 0 ? enemy.hp : this.config.enemies[enemy.type].hp, // Use remaining HP or base if dead
+        hp: transferHp,
         speed: enemy.speed,
         _leakKey: leakKey,
       });
+      console.log(`[leak] ${enemy.type} transferred from ${fromPlayerId} to ${targetId} (hp: ${Math.round(transferHp)}, visited: ${visited.size}/${this.lanes.size})`);
     } else {
       // Enemy survived ALL lanes — deal damage to shared HP
       const leakDamage = this.config.enemies[enemy.type].leakDamage;

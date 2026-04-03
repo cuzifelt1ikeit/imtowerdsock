@@ -221,6 +221,10 @@ class WaveManager {
     const spawnCol = Math.floor(Math.random() * this.grid.cols);
     const id = this._nextEnemyId++;
     const enemy = new Enemy(id, spawnCol, 0, enemyData.hp, enemyData.speed, enemyData.type, true, this.config);
+    // Preserve leak tracking key so the system knows which lanes this enemy has visited
+    if (enemyData._leakKey) {
+      enemy._leakKey = enemyData._leakKey;
+    }
     const path = this.grid.findPath(spawnCol, 0, null);
     if (path) {
       enemy.setPath(path);
