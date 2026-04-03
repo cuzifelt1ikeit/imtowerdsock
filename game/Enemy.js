@@ -68,7 +68,7 @@ class Enemy {
     const dy = target.row - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    if (dist < 0.1) {
+    if (dist < 0.15) {
       this.x = target.col;
       this.y = target.row;
       this.col = target.col;

@@ -221,18 +221,30 @@ class WaveManager {
 
   // Spawn a transferred enemy from another lane
   spawnTransfer(enemyData) {
-    const spawnCol = Math.floor(Math.random() * this.grid.cols);
     const id = this._nextEnemyId++;
+
+    // Try random column first, then all columns
+    let spawnCol = Math.floor(Math.random() * this.grid.cols);
+    let path = this.grid.findPath(spawnCol, 0, null);
+    if (!path) {
+      for (let c = 0; c < this.grid.cols; c++) {
+        path = this.grid.findPath(c, 0, null);
+        if (path) { spawnCol = c; break; }
+      }
+    }
+    if (!path) return; // No valid path at all
+
     const enemy = new Enemy(id, spawnCol, 0, enemyData.hp, enemyData.speed, enemyData.type, true, this.config);
-    // Preserve leak tracking key so the system knows which lanes this enemy has visited
     if (enemyData._leakKey) {
       enemy._leakKey = enemyData._leakKey;
     }
-    const path = this.grid.findPath(spawnCol, 0, null);
-    if (path) {
-      enemy.setPath(path);
-      this.enemies.push(enemy);
-    }
+    // Ensure position matches path start
+    enemy.x = path[0].col;
+    enemy.y = path[0].row;
+    enemy.col = path[0].col;
+    enemy.row = path[0].row;
+    enemy.setPath(path);
+    this.enemies.push(enemy);
   }
 
   recalculatePaths() {
