@@ -64,6 +64,12 @@ class GameInstance {
     this.gameStarted = true;
     this.startTime = Date.now();
 
+    // Auto-start all lanes (begin wave 1)
+    for (const lane of this.lanes.values()) {
+      lane.waveManager.waitingForPlayer = false;
+      lane.waveManager.betweenWaveTimer = 5; // 5 second countdown before wave 1
+    }
+
     // Start the game loop
     this._tickInterval = setInterval(() => {
       this._tick();
