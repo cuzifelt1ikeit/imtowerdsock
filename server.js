@@ -244,6 +244,51 @@ io.on('connection', (socket) => {
     ack?.({ success: true });
   });
 
+  // MARK: - Pause / Resume
+  socket.on('pause_game', (data, ack) => {
+    if (!playerId) return ack?.({ success: false });
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room || !room.game) return ack?.({ success: false });
+
+    room.game.paused = true;
+    room.game.pausedBy = playerId;
+    room.game.pausedByUsername = username;
+    // Actually pause the tick loop
+    if (room.game._tickInterval) {
+      clearInterval(room.game._tickInterval);
+      room.game._tickInterval = null;
+    }
+
+    io.to(room.code).emit('game_paused', {
+      pausedBy: playerId,
+      pausedByUsername: username,
+    });
+    console.log(`[game:pause] ${username} paused room ${room.code}`);
+    ack?.({ success: true });
+  });
+
+  socket.on('resume_game', (data, ack) => {
+    if (!playerId) return ack?.({ success: false });
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room || !room.game) return ack?.({ success: false });
+    // Only the player who paused can resume
+    if (room.game.pausedBy !== playerId) return ack?.({ success: false, reason: 'not_pauser' });
+
+    room.game.paused = false;
+    room.game.pausedBy = null;
+    room.game.pausedByUsername = null;
+    // Restart the tick loop
+    if (!room.game._tickInterval) {
+      room.game._tickInterval = setInterval(() => {
+        room.game._tick();
+      }, room.game._tickRate);
+    }
+
+    io.to(room.code).emit('game_resumed', {});
+    console.log(`[game:resume] ${username} resumed room ${room.code}`);
+    ack?.({ success: true });
+  });
+
   // MARK: - Game Action
   socket.on('game_action', (action, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
