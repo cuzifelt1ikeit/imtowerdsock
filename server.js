@@ -261,15 +261,14 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('game_started', { playerIds: Array.from(room.players.keys()) });
   }
 
-  // MARK: - Start Game (host only, when all current players are ready)
+  // MARK: - Start Game (any player, after countdown)
   socket.on('start_game', (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
 
     const room = roomManager.getPlayerRoom(playerId);
     if (!room) return ack?.({ success: false, reason: 'not_in_room' });
-    if (room.hostId !== playerId) return ack?.({ success: false, reason: 'not_host' });
+    if (room.state === 'playing') return ack?.({ success: true }); // Already started by another client's countdown
     if (room.players.size < 2) return ack?.({ success: false, reason: 'need_more_players' });
-    if (!room.allReady) return ack?.({ success: false, reason: 'not_all_ready' });
 
     if (!room.startGame()) {
       return ack?.({ success: false, reason: 'start_failed' });
