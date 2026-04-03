@@ -23,9 +23,9 @@ class GameInstance {
     this._leakId = 0;
 
     this._tickInterval = null;
-    this._tickRate = 50; // ms (20 ticks/sec)
+    this._tickRate = 16; // ms (~60 ticks/sec)
     this._broadcastCounter = 0;
-    this._broadcastEvery = 3; // Send state every 3rd tick (~7fps, reduces bandwidth)
+    this._broadcastEvery = 8; // Send state every 8th tick (~7.5fps, reduces bandwidth)
 
     // Synchronized wave management
     this._allLanesCleared = false;

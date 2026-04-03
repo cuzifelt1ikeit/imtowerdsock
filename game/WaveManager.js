@@ -136,7 +136,7 @@ class WaveManager {
           type: intro.type,
           hp: Math.round(enemyCfg.hp * hpMult),
           speed: enemyCfg.speed * speedMult,
-          isPathfinder: true, // All enemies use A* pathfinding on server
+          isPathfinder: Math.random() < pfRatio,
         });
       }
     } else {
@@ -161,7 +161,7 @@ class WaveManager {
           type: t,
           hp: Math.round(enemyCfg.hp * hpMult),
           speed: enemyCfg.speed * speedMult,
-          isPathfinder: true, // All enemies use A* pathfinding on server
+          isPathfinder: Math.random() < pfRatio,
         });
       }
     }
