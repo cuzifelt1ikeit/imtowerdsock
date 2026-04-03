@@ -289,6 +289,30 @@ io.on('connection', (socket) => {
     ack?.({ success: true });
   });
 
+  // MARK: - Return to Lobby
+  socket.on('return_to_lobby', (data, ack) => {
+    if (!playerId) return;
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room) return;
+
+    // Stop the game if running
+    if (room.game) {
+      room.game.stop();
+      room.game = null;
+    }
+
+    // Reset room to lobby state
+    room.state = 'lobby';
+    for (const [pid, info] of room.players) {
+      info.ready = false;
+    }
+
+    io.to(room.code).emit('returned_to_lobby', {});
+    io.to(room.code).emit('lobby_update', room.tolobbyState());
+    console.log(`[room:lobby] ${username} returned room ${room.code} to lobby`);
+    ack?.({ success: true });
+  });
+
   // MARK: - Game Action
   socket.on('game_action', (action, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
