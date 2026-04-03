@@ -75,9 +75,10 @@ class GameInstance {
     for (const lane of this.lanes.values()) {
       lane.waveManager.waitingForPlayer = true;
     }
-    // Start first wave after 5 seconds
-    this._betweenWaveTimer = 5;
-    this._allLanesCleared = true; // So the cleared check doesn't fire before wave 1
+    // Wait for players to manually start (via send_early / start button)
+    this._betweenWaveTimer = 0;
+    this._allLanesCleared = true;
+    this._waitingForFirstWave = true;
 
     // Start the game loop
     this._tickInterval = setInterval(() => {
@@ -227,11 +228,18 @@ class GameInstance {
         return lane.upgradeUnit(action.col, action.row, action.unitIndex);
 
       case 'send_early': {
-        // In synced mode, send early skips the countdown for ALL lanes
+        // First wave — any player can start the game
+        if (this._waitingForFirstWave) {
+          this._waitingForFirstWave = false;
+          this._waveQueued = true;
+          console.log(`[wave] Game started by player ${playerId}`);
+          return { success: true, bonus: 0 };
+        }
+        // Between waves — skip countdown for ALL lanes
         if (this._betweenWaveTimer > 0) {
           const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
           this._betweenWaveTimer = 0;
-          this._waveQueued = true; // Start wave on next tick
+          this._waveQueued = true;
           if (bonus > 0) {
             lane.cash += bonus;
             lane.totalEarned += bonus;
@@ -269,7 +277,8 @@ class GameInstance {
       waveNumber: this.waveNumber,
       gameOver: this.gameOver,
       waveCountdown: Math.max(0, Math.round(this._betweenWaveTimer * 10) / 10),
-      allLanesActive: !this._allLanesCleared, // true when enemies are still alive somewhere
+      allLanesActive: !this._allLanesCleared,
+      waitingForStart: this._waitingForFirstWave || false,
       lanes,
     };
   }
