@@ -142,6 +142,45 @@ io.on('connection', (socket) => {
     if (ack) ack({ success: true, reconnected: false });
   });
 
+  // MARK: - Lobby Browser
+  socket.on('join_lobby_browser', (data, ack) => {
+    socket.join('lobby-browser');
+    // Send current open lobbies
+    const lobbies = [];
+    for (const [code, room] of roomManager.rooms) {
+      if (room.state === 'lobby' && room.players.size < 4) {
+        lobbies.push({
+          code,
+          hostUsername: room.players.get(room.hostId)?.username || '???',
+          playerCount: room.players.size,
+          maxPlayers: 4,
+          players: Array.from(room.players.values()).map(p => p.username),
+        });
+      }
+    }
+    socket.emit('lobbies_list', lobbies);
+    ack?.({ success: true });
+  });
+
+  socket.on('leave_lobby_browser', () => {
+    socket.leave('lobby-browser');
+  });
+
+  // Helper: broadcast lobby update to browser channel
+  function broadcastLobbyBrowser(event, data) {
+    io.to('lobby-browser').emit(event, data);
+  }
+
+  function getLobbyInfo(room) {
+    return {
+      code: room.code,
+      hostUsername: room.players.get(room.hostId)?.username || '???',
+      playerCount: room.players.size,
+      maxPlayers: 4,
+      players: Array.from(room.players.values()).map(p => p.username),
+    };
+  }
+
   // MARK: - Create Room
   socket.on('create_room', (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
@@ -152,6 +191,7 @@ io.on('connection', (socket) => {
 
     ack?.({ success: true, code: room.code });
     io.to(room.code).emit('lobby_update', room.tolobbyState());
+    broadcastLobbyBrowser('lobby_created', getLobbyInfo(room));
   });
 
   // MARK: - Join Room
@@ -168,6 +208,7 @@ io.on('connection', (socket) => {
 
     ack?.({ success: true, code: data.code.toUpperCase() });
     io.to(data.code.toUpperCase()).emit('lobby_update', result.room.tolobbyState());
+    broadcastLobbyBrowser('lobby_updated', getLobbyInfo(result.room));
   });
 
   // MARK: - Leave Room
@@ -184,6 +225,9 @@ io.on('connection', (socket) => {
       const updatedRoom = roomManager.getRoom(code);
       if (updatedRoom) {
         io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
+        broadcastLobbyBrowser('lobby_updated', getLobbyInfo(updatedRoom));
+      } else {
+        broadcastLobbyBrowser('lobby_closed', { code });
       }
     }
     ack?.({ success: true });
@@ -268,6 +312,7 @@ io.on('connection', (socket) => {
 
     console.log(`[game:start] Room ${room.code} — ${room.players.size} players`);
     io.to(room.code).emit('game_started', { playerIds: Array.from(room.players.keys()) });
+    broadcastLobbyBrowser('lobby_started', { code: room.code });
   }
 
   // MARK: - Start Game (any player, after countdown)
@@ -353,6 +398,7 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('returned_to_lobby', {});
     io.to(room.code).emit('lobby_update', room.tolobbyState());
     console.log(`[room:lobby] ${username} returned room ${room.code} to lobby`);
+    broadcastLobbyBrowser('lobby_returned', getLobbyInfo(room));
     ack?.({ success: true });
   });
 
