@@ -24,6 +24,8 @@ class GameInstance {
 
     this._tickInterval = null;
     this._tickRate = 50; // ms (20 ticks/sec)
+    this._broadcastCounter = 0;
+    this._broadcastEvery = 3; // Send state every 3rd tick (~7fps, reduces bandwidth)
 
     // Callback for broadcasting state
     this.onStateUpdate = null;
@@ -101,8 +103,10 @@ class GameInstance {
       }
     }
 
-    // Broadcast state
-    if (this.onStateUpdate) {
+    // Broadcast state (throttled)
+    this._broadcastCounter++;
+    if (this._broadcastCounter >= this._broadcastEvery && this.onStateUpdate) {
+      this._broadcastCounter = 0;
       this.onStateUpdate(this.getState());
     }
   }
