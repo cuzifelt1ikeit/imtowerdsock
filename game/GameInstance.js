@@ -30,7 +30,7 @@ class GameInstance {
     // Synchronized wave management
     this._allLanesCleared = false;
     this._betweenWaveTimer = 0;
-    this._waveSynced = true; // Use synchronized wave system
+    this._waveQueued = false; // Flag: start wave on next tick
 
     // Callback for broadcasting state
     this.onStateUpdate = null;
@@ -73,10 +73,11 @@ class GameInstance {
 
     // Disable individual lane wave progression — GameInstance controls it
     for (const lane of this.lanes.values()) {
-      lane.waveManager.waitingForPlayer = true; // Prevent lanes from auto-starting waves
+      lane.waveManager.waitingForPlayer = true;
     }
     // Start first wave after 5 seconds
     this._betweenWaveTimer = 5;
+    this._allLanesCleared = true; // So the cleared check doesn't fire before wave 1
 
     // Start the game loop
     this._tickInterval = setInterval(() => {
@@ -97,13 +98,17 @@ class GameInstance {
     const dt = this._tickRate / 1000; // Convert ms to seconds
 
     // Synchronized wave management
-    if (this._betweenWaveTimer > 0) {
+    if (this._waveQueued) {
+      this._waveQueued = false;
+      this._startNextWaveAllLanes();
+    } else if (this._betweenWaveTimer > 0) {
       this._betweenWaveTimer -= dt;
       if (this._betweenWaveTimer <= 0) {
+        this._betweenWaveTimer = 0;
         this._startNextWaveAllLanes();
       }
-    } else {
-      // Check if ALL lanes have cleared their wave (no alive enemies, no spawn queue)
+    } else if (this.waveNumber > 0) {
+      // Check if ALL lanes have cleared their wave
       const allCleared = Array.from(this.lanes.values()).every(lane => {
         const wm = lane.waveManager;
         return wm.spawnQueue.length === 0 && !wm.enemies.some(e => e.alive);
@@ -111,9 +116,7 @@ class GameInstance {
 
       if (allCleared && !this._allLanesCleared) {
         this._allLanesCleared = true;
-        // Start between-wave countdown
         this._betweenWaveTimer = this.config.waves.betweenDuration;
-        // Clean up dead enemies in all lanes
         for (const lane of this.lanes.values()) {
           lane.waveManager.enemies = [];
           lane.waveManager.waveActive = false;
@@ -227,12 +230,13 @@ class GameInstance {
         // In synced mode, send early skips the countdown for ALL lanes
         if (this._betweenWaveTimer > 0) {
           const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
-          this._betweenWaveTimer = 0; // Will trigger wave start on next tick
-          // Give bonus to the player who sent early
+          this._betweenWaveTimer = 0;
+          this._waveQueued = true; // Start wave on next tick
           if (bonus > 0) {
             lane.cash += bonus;
             lane.totalEarned += bonus;
           }
+          console.log(`[wave] Send early by player ${playerId}, bonus $${bonus}`);
           return { success: true, bonus };
         }
         return { success: true, bonus: 0 };
