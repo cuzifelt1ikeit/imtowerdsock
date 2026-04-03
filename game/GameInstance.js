@@ -25,7 +25,7 @@ class GameInstance {
     this._tickInterval = null;
     this._tickRate = 16; // ms (~60 ticks/sec)
     this._broadcastCounter = 0;
-    this._broadcastEvery = 8; // Send state every 8th tick (~7.5fps, reduces bandwidth)
+    this._broadcastEvery = 2; // Send state every 2nd tick (~30fps)
 
     // Synchronized wave management
     this._allLanesCleared = false;
