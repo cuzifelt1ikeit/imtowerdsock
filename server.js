@@ -127,6 +127,13 @@ io.on('connection', (socket) => {
         socket.emit('game_state', existingRoom.game.getState());
       }
 
+      // Cancel disconnect timer if any
+      if (existingRoom._disconnectTimers?.has(playerId)) {
+        clearTimeout(existingRoom._disconnectTimers.get(playerId));
+        existingRoom._disconnectTimers.delete(playerId);
+        console.log(`[reconnect] Cancelled disconnect timer for ${username}`);
+      }
+
       // Notify others
       io.to(existingRoom.code).emit('player_reconnected', { playerId, username });
       return;
@@ -491,13 +498,28 @@ io.on('connection', (socket) => {
       room.players.delete(playerId);
       roomManager.playerRooms.delete(playerId);
     } else {
-      // In lobby — remove immediately
-      roomManager.leaveRoom(playerId);
-      const updatedRoom = roomManager.getRoom(code);
-      if (updatedRoom) {
-        io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
-        io.to(code).emit('player_disconnected', { playerId, username });
-      }
+      // In lobby — give 30 seconds to reconnect (switching apps to share code etc.)
+      io.to(code).emit('player_disconnected', { playerId, username, gracePeriod: 30 });
+      console.log(`[disconnect] ${username} has 30s to reconnect to lobby ${code}`);
+
+      const disconnectTimer = setTimeout(() => {
+        const currentRoom = roomManager.getPlayerRoom(playerId);
+        if (currentRoom && currentRoom.code === code) {
+          const playerInfo = currentRoom.players.get(playerId);
+          if (playerInfo && playerInfo.socketId === socket.id) {
+            console.log(`[disconnect] ${username} timed out from lobby ${code}`);
+            roomManager.leaveRoom(playerId);
+            const updatedRoom = roomManager.getRoom(code);
+            if (updatedRoom) {
+              io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
+              io.to(code).emit('player_left', { playerId, username });
+            }
+          }
+        }
+      }, 30000);
+
+      if (!room._disconnectTimers) room._disconnectTimers = new Map();
+      room._disconnectTimers.set(playerId, disconnectTimer);
     }
   });
 });
