@@ -36,6 +36,24 @@ function containsProfanity(text) {
   return banned.some(w => lower.includes(w) || normalized.includes(w));
 }
 
+function censorProfanity(text) {
+  const banned = [
+    'nigger','nigga','nigg3r','n1gger','n1gga','faggot','fagg0t','f4ggot','tranny','retard','r3tard',
+    'spic','chink','kike','wetback','coon','gook','beaner','towelhead','raghead',
+    'fuck','fuk','fck','f_ck','fuq','shit','sh1t','sht','ass','a55','arse','bitch','b1tch','btch',
+    'cunt','c_nt','cock','c0ck','dick','d1ck','penis','vagina','pussy','puss','tits','t1ts','boob',
+    'whore','wh0re','hoe','slut','cum','jizz','porn','p0rn','nude','nud3','rape','r4pe','molest','pedo','paedo',
+    'kill','murder','suicide','kms','kys',
+    'nazi','n4zi','hitler','h1tler','holocaust','kkk','jihad','terrorist','bomb',
+  ];
+  let result = text;
+  for (const word of banned) {
+    const regex = new RegExp(word, 'gi');
+    result = result.replace(regex, '*'.repeat(word.length));
+  }
+  return result;
+}
+
 const PORT = process.env.PORT || 3001;
 const server = http.createServer((req, res) => {
   // Health check endpoint
@@ -425,20 +443,10 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (containsProfanity(msg)) {
-      socket.emit('chat_message', {
-        playerId: 'system',
-        username: 'System',
-        message: 'Message blocked — keep it clean.',
-        timestamp: Date.now(),
-      });
-      return;
-    }
-
     io.to(room.code).emit('chat_message', {
       playerId,
       username,
-      message: msg,
+      message: censorProfanity(msg),
       timestamp: Date.now(),
     });
   });
