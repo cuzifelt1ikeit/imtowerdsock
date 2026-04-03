@@ -20,6 +20,22 @@ Enemy.setWandererWeights(config);
 const LARAVEL_API = process.env.LARAVEL_API_URL || 'https://imptowerdef.on-forge.com/api';
 const SERVER_KEY = process.env.GAME_SERVER_KEY || '';
 
+// Profanity filter (same list as Laravel CleanUsername rule)
+function containsProfanity(text) {
+  const banned = [
+    'nigger','nigga','nigg3r','n1gger','n1gga','faggot','fagg0t','f4ggot','tranny','retard','r3tard',
+    'spic','chink','kike','wetback','coon','gook','beaner','towelhead','raghead',
+    'fuck','fuk','fck','f_ck','fuq','shit','sh1t','sht','ass','a55','arse','bitch','b1tch','btch',
+    'cunt','c_nt','cock','c0ck','dick','d1ck','penis','vagina','pussy','puss','tits','t1ts','boob',
+    'whore','wh0re','hoe','slut','cum','jizz','porn','p0rn','nude','nud3','rape','r4pe','molest','pedo','paedo',
+    'kill','murder','suicide','kms','kys',
+    'nazi','n4zi','hitler','h1tler','holocaust','kkk','jihad','terrorist','bomb',
+  ];
+  const lower = text.toLowerCase();
+  const normalized = lower.replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a').replace(/5/g,'s').replace(/7/g,'t').replace(/@/g,'a').replace(/\$/g,'s');
+  return banned.some(w => lower.includes(w) || normalized.includes(w));
+}
+
 const PORT = process.env.PORT || 3001;
 const server = http.createServer((req, res) => {
   // Health check endpoint
@@ -326,15 +342,93 @@ io.on('connection', (socket) => {
   });
 
   // MARK: - Chat
-  socket.on('chat_message', (data) => {
+  socket.on('chat_message', async (data) => {
     if (!playerId) return;
     const room = roomManager.getPlayerRoom(playerId);
     if (!room) return;
 
+    const msg = (data.message || '').substring(0, 200);
+
+    // Handle /name command (host only)
+    if (msg.startsWith('/name ')) {
+      if (room.hostId !== playerId) {
+        socket.emit('chat_message', {
+          playerId: 'system',
+          username: 'System',
+          message: 'Only the host can rename the team.',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      const newName = msg.substring(6).trim();
+
+      if (newName.length < 2 || newName.length > 30) {
+        socket.emit('chat_message', {
+          playerId: 'system',
+          username: 'System',
+          message: 'Team name must be 2-30 characters.',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // Check profanity
+      if (containsProfanity(newName)) {
+        socket.emit('chat_message', {
+          playerId: 'system',
+          username: 'System',
+          message: 'That team name is not allowed.',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // Update via Laravel API
+      try {
+        const playerIds = Array.from(room.players.keys()).map(id => parseInt(id));
+        const resp = await fetch(`${LARAVEL_API}/mp/rename-team`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Server-Key': SERVER_KEY,
+          },
+          body: JSON.stringify({ player_ids: playerIds, team_name: newName }),
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+          io.to(room.code).emit('chat_message', {
+            playerId: 'system',
+            username: 'System',
+            message: `Team renamed to "${result.team_name}"`,
+            timestamp: Date.now(),
+          });
+          io.to(room.code).emit('team_name_updated', { teamName: result.team_name });
+          console.log(`[room:rename] Room ${room.code} renamed to "${result.team_name}"`);
+        } else {
+          socket.emit('chat_message', {
+            playerId: 'system',
+            username: 'System',
+            message: result.message || 'Could not rename team.',
+            timestamp: Date.now(),
+          });
+        }
+      } catch (err) {
+        socket.emit('chat_message', {
+          playerId: 'system',
+          username: 'System',
+          message: 'Failed to rename team. Try again.',
+          timestamp: Date.now(),
+        });
+      }
+      return;
+    }
+
     io.to(room.code).emit('chat_message', {
       playerId,
       username,
-      message: data.message.substring(0, 200), // Cap at 200 chars
+      message: msg,
       timestamp: Date.now(),
     });
   });
