@@ -37,6 +37,9 @@ class Lane {
       this.cash += this.currentBounty;
       this.totalEarned += this.currentBounty;
       this.totalKills++;
+      if (this.totalKills <= 3) {
+        console.log(`[lane:${this.playerId}] Kill! +$${this.currentBounty}, cash now: $${this.cash}`);
+      }
     };
 
     this.waveManager.onWaveStart = (waveNum) => {

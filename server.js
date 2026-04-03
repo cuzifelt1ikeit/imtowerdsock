@@ -310,6 +310,22 @@ io.on('connection', (socket) => {
       }
     };
 
+    // Store player names for chat announcements
+    room.game._playerNames = {};
+    for (const [pid, info] of room.players) {
+      room.game._playerNames[pid] = info.username;
+    }
+
+    // Wire up chat announcements from game events
+    room.game.onChatAnnounce = (message) => {
+      io.to(room.code).emit('chat_message', {
+        playerId: 'system',
+        username: 'System',
+        message,
+        timestamp: Date.now(),
+      });
+    };
+
     console.log(`[game:start] Room ${room.code} — ${room.players.size} players`);
     io.to(room.code).emit('game_started', { playerIds: Array.from(room.players.keys()) });
     broadcastLobbyBrowser('lobby_started', { code: room.code });

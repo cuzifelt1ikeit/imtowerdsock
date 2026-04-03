@@ -8,7 +8,15 @@ const { Lane } = require('./Lane');
 class GameInstance {
   constructor(roomId, config) {
     this.roomId = roomId;
-    this.config = config;
+    // MP config overrides
+    this.config = {
+      ...config,
+      player: {
+        ...config.player,
+        startCash: 1300, // More cash to build before harder waves
+      },
+      _mpStartWave: 5, // Waves 1-5 are skipped, start generating at wave 6 difficulty
+    };
     this.lanes = new Map(); // playerId -> Lane
     this.sharedHp = config.player.maxHp;
     this.maxHp = config.player.maxHp;
@@ -152,23 +160,26 @@ class GameInstance {
     this.waveNumber++;
     this._allLanesCleared = false;
 
+    // In MP, wave difficulty is offset (wave 1 plays like wave 6 in SP)
+    const difficultyWave = this.waveNumber + (this.config._mpStartWave || 0);
+
     for (const lane of this.lanes.values()) {
-      // Directly start the wave on each lane's wave manager
       const wm = lane.waveManager;
       wm.waveNumber = this.waveNumber;
       wm.waveActive = true;
       wm.waveCleared = false;
-      wm.spawnQueue = wm._generateWave(this.waveNumber);
+      // Generate wave using offset difficulty
+      wm.spawnQueue = wm._generateWave(difficultyWave);
       wm.spawnTimer = 0;
 
-      // Recalculate bounty
+      // Recalculate bounty using difficulty wave
       const bCfg = this.config.bounty;
-      const budget = bCfg.budgetBase + this.waveNumber * bCfg.budgetPerWave;
+      const budget = bCfg.budgetBase + difficultyWave * bCfg.budgetPerWave;
       const totalEnemies = wm.spawnQueue.length;
       lane.currentBounty = Math.max(1, Math.round(budget / Math.max(1, totalEnemies)));
     }
 
-    console.log(`[wave] Starting wave ${this.waveNumber} on all lanes`);
+    console.log(`[wave] Starting wave ${this.waveNumber} (difficulty ${difficultyWave}) on all lanes`);
   }
 
   _handleLeak(fromPlayerId, enemy) {
@@ -235,9 +246,10 @@ class GameInstance {
           console.log(`[wave] Game started by player ${playerId}`);
           return { success: true, bonus: 0 };
         }
-        // Between waves — skip countdown for ALL lanes, bonus to ALL players
+        // Between waves — skip countdown, bonus to ALL + $25 extra to the grabber
         if (this._betweenWaveTimer > 0) {
           const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
+          const grabberBonus = 25;
           this._betweenWaveTimer = 0;
           this._waveQueued = true;
           if (bonus > 0) {
@@ -246,8 +258,16 @@ class GameInstance {
               l.totalEarned += bonus;
             }
           }
-          console.log(`[wave] Send early by player ${playerId}, bonus $${bonus} to all players`);
-          return { success: true, bonus };
+          // Extra $25 to whoever grabbed it
+          lane.cash += grabberBonus;
+          lane.totalEarned += grabberBonus;
+
+          // Announce in chat
+          const playerInfo = this._getPlayerUsername(playerId);
+          this._announceChat(`${playerInfo} grabbed the loot! +$${grabberBonus} bonus`);
+
+          console.log(`[wave] Send early by ${playerInfo}, bonus $${bonus} to all, +$${grabberBonus} to grabber`);
+          return { success: true, bonus: bonus + grabberBonus };
         }
         return { success: true, bonus: 0 };
       }
@@ -305,6 +325,18 @@ class GameInstance {
       durationSeconds: Math.round((Date.now() - this.startTime) / 1000),
       players,
     };
+  }
+
+  _getPlayerUsername(playerId) {
+    // Look up username from the room (set by server.js when game starts)
+    return this._playerNames?.[playerId] || `Player ${playerId}`;
+  }
+
+  _announceChat(message) {
+    // Will be overridden by server.js to broadcast chat
+    if (this.onChatAnnounce) {
+      this.onChatAnnounce(message);
+    }
   }
 
   get playerCount() {
