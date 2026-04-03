@@ -94,6 +94,18 @@ class GameInstance {
       lane.update(dt);
     }
 
+    // Debug: log enemy positions every 2 seconds for wave 2
+    this._debugCounter = (this._debugCounter || 0) + 1;
+    if (this._debugCounter % 40 === 0) { // every 2 sec at 20tps
+      for (const [pid, lane] of this.lanes) {
+        const alive = lane.waveManager.enemies.filter(e => e.alive);
+        if (alive.length > 0 && lane.waveManager.waveNumber === 2) {
+          const positions = alive.slice(0, 3).map(e => `(${e.x.toFixed(1)},${e.y.toFixed(1)})`);
+          console.log(`[debug] Wave ${lane.waveManager.waveNumber} player ${pid}: ${alive.length} alive, pos: ${positions.join(' ')}`);
+        }
+      }
+    }
+
     // Check game over
     if (this.sharedHp <= 0 && !this.gameOver) {
       this.gameOver = true;

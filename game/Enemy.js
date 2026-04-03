@@ -155,8 +155,14 @@ class Enemy {
     this.lastDir = from;
     this.path = [from, target];
     this.pathIndex = 0;
-    this.x = from.col;
-    this.y = from.row;
+    // Don't snap position — use current position to avoid oscillation
+    // Only snap if we're far from the "from" cell (shouldn't happen)
+    const dx = Math.abs(this.x - from.col);
+    const dy = Math.abs(this.y - from.row);
+    if (dx > 0.5 || dy > 0.5) {
+      this.x = from.col;
+      this.y = from.row;
+    }
   }
 
   // Damage

@@ -113,6 +113,7 @@ class WaveManager {
     this.waveCleared = false;
     this.spawnQueue = this._generateWave(this.waveNumber);
     this.spawnTimer = 0;
+    console.log(`[wave] Starting wave ${this.waveNumber}: ${this.spawnQueue.length} enemies, ${this.enemies.length} leftover`);
     if (this.onWaveStart) this.onWaveStart(this.waveNumber);
   }
 
