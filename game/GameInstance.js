@@ -27,6 +27,11 @@ class GameInstance {
     this._broadcastCounter = 0;
     this._broadcastEvery = 3; // Send state every 3rd tick (~7fps, reduces bandwidth)
 
+    // Synchronized wave management
+    this._allLanesCleared = false;
+    this._betweenWaveTimer = 0;
+    this._waveSynced = true; // Use synchronized wave system
+
     // Callback for broadcasting state
     this.onStateUpdate = null;
     this.onGameOver = null;
@@ -66,11 +71,12 @@ class GameInstance {
     this.gameStarted = true;
     this.startTime = Date.now();
 
-    // Auto-start all lanes (begin wave 1)
+    // Disable individual lane wave progression — GameInstance controls it
     for (const lane of this.lanes.values()) {
-      lane.waveManager.waitingForPlayer = false;
-      lane.waveManager.betweenWaveTimer = 5; // 5 second countdown before wave 1
+      lane.waveManager.waitingForPlayer = true; // Prevent lanes from auto-starting waves
     }
+    // Start first wave after 5 seconds
+    this._betweenWaveTimer = 5;
 
     // Start the game loop
     this._tickInterval = setInterval(() => {
@@ -90,20 +96,35 @@ class GameInstance {
 
     const dt = this._tickRate / 1000; // Convert ms to seconds
 
-    for (const lane of this.lanes.values()) {
-      lane.update(dt);
+    // Synchronized wave management
+    if (this._betweenWaveTimer > 0) {
+      this._betweenWaveTimer -= dt;
+      if (this._betweenWaveTimer <= 0) {
+        this._startNextWaveAllLanes();
+      }
+    } else {
+      // Check if ALL lanes have cleared their wave (no alive enemies, no spawn queue)
+      const allCleared = Array.from(this.lanes.values()).every(lane => {
+        const wm = lane.waveManager;
+        return wm.spawnQueue.length === 0 && !wm.enemies.some(e => e.alive);
+      });
+
+      if (allCleared && !this._allLanesCleared) {
+        this._allLanesCleared = true;
+        // Start between-wave countdown
+        this._betweenWaveTimer = this.config.waves.betweenDuration;
+        // Clean up dead enemies in all lanes
+        for (const lane of this.lanes.values()) {
+          lane.waveManager.enemies = [];
+          lane.waveManager.waveActive = false;
+          lane.waveManager.waveCleared = true;
+        }
+        console.log(`[wave] All lanes cleared wave ${this.waveNumber}, next in ${this.config.waves.betweenDuration}s`);
+      }
     }
 
-    // Debug: log enemy positions every 2 seconds for wave 2
-    this._debugCounter = (this._debugCounter || 0) + 1;
-    if (this._debugCounter % 40 === 0) { // every 2 sec at 20tps
-      for (const [pid, lane] of this.lanes) {
-        const alive = lane.waveManager.enemies.filter(e => e.alive);
-        if (alive.length > 0 && lane.waveManager.waveNumber === 2) {
-          const positions = alive.slice(0, 3).map(e => `(${e.x.toFixed(1)},${e.y.toFixed(1)})`);
-          console.log(`[debug] Wave ${lane.waveManager.waveNumber} player ${pid}: ${alive.length} alive, pos: ${positions.join(' ')}`);
-        }
-      }
+    for (const lane of this.lanes.values()) {
+      lane.update(dt);
     }
 
     // Check game over
@@ -121,6 +142,29 @@ class GameInstance {
       this._broadcastCounter = 0;
       this.onStateUpdate(this.getState());
     }
+  }
+
+  _startNextWaveAllLanes() {
+    this.waveNumber++;
+    this._allLanesCleared = false;
+
+    for (const lane of this.lanes.values()) {
+      // Directly start the wave on each lane's wave manager
+      const wm = lane.waveManager;
+      wm.waveNumber = this.waveNumber;
+      wm.waveActive = true;
+      wm.waveCleared = false;
+      wm.spawnQueue = wm._generateWave(this.waveNumber);
+      wm.spawnTimer = 0;
+
+      // Recalculate bounty
+      const bCfg = this.config.bounty;
+      const budget = bCfg.budgetBase + this.waveNumber * bCfg.budgetPerWave;
+      const totalEnemies = wm.spawnQueue.length;
+      lane.currentBounty = Math.max(1, Math.round(budget / Math.max(1, totalEnemies)));
+    }
+
+    console.log(`[wave] Starting wave ${this.waveNumber} on all lanes`);
   }
 
   _handleLeak(fromPlayerId, enemy) {
@@ -180,12 +224,18 @@ class GameInstance {
         return lane.upgradeUnit(action.col, action.row, action.unitIndex);
 
       case 'send_early': {
-        const bonus = lane.sendEarly();
-        if (bonus > 0) {
-          lane.cash += bonus;
-          lane.totalEarned += bonus;
+        // In synced mode, send early skips the countdown for ALL lanes
+        if (this._betweenWaveTimer > 0) {
+          const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
+          this._betweenWaveTimer = 0; // Will trigger wave start on next tick
+          // Give bonus to the player who sent early
+          if (bonus > 0) {
+            lane.cash += bonus;
+            lane.totalEarned += bonus;
+          }
+          return { success: true, bonus };
         }
-        return { success: true, bonus };
+        return { success: true, bonus: 0 };
       }
 
       default:
@@ -214,6 +264,7 @@ class GameInstance {
       maxHp: this.maxHp,
       waveNumber: this.waveNumber,
       gameOver: this.gameOver,
+      waveCountdown: Math.max(0, Math.round(this._betweenWaveTimer * 10) / 10),
       lanes,
     };
   }
