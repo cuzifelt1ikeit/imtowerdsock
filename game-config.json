@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "activeSkin": "default",
   "grid": {
     "cols": 9,
     "rows": 20
