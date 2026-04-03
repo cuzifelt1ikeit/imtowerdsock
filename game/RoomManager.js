@@ -17,7 +17,8 @@ class Room {
   addPlayer(playerId, username, socketId) {
     if (this.players.size >= 4) return false;
     if (this.state !== 'lobby') return false;
-    this.players.set(playerId, { username, socketId, ready: false });
+    const colorIndex = this.players.size; // 0=blue, 1=orange, 2=green, 3=red
+    this.players.set(playerId, { username, socketId, ready: false, colorIndex });
     return true;
   }
 
@@ -82,6 +83,7 @@ class Room {
         username: info.username,
         isHost: pid === this.hostId,
         ready: info.ready || false,
+        colorIndex: info.colorIndex ?? 0,
       });
     }
     return {

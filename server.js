@@ -443,9 +443,11 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const playerInfo = room.players.get(playerId);
     io.to(room.code).emit('chat_message', {
       playerId,
       username,
+      colorIndex: playerInfo?.colorIndex ?? 0,
       message: censorProfanity(msg),
       timestamp: Date.now(),
     });
