@@ -499,8 +499,8 @@ io.on('connection', (socket) => {
       roomManager.playerRooms.delete(playerId);
     } else {
       // In lobby — give 30 seconds to reconnect (switching apps to share code etc.)
-      io.to(code).emit('player_disconnected', { playerId, username, gracePeriod: 30 });
-      console.log(`[disconnect] ${username} has 30s to reconnect to lobby ${code}`);
+      io.to(code).emit('player_disconnected', { playerId, username, gracePeriod: 120 });
+      console.log(`[disconnect] ${username} has 120s to reconnect to lobby ${code}`);
 
       const disconnectTimer = setTimeout(() => {
         const currentRoom = roomManager.getPlayerRoom(playerId);
@@ -516,7 +516,7 @@ io.on('connection', (socket) => {
             }
           }
         }
-      }, 30000);
+      }, 120000);
 
       if (!room._disconnectTimers) room._disconnectTimers = new Map();
       room._disconnectTimers.set(playerId, disconnectTimer);
