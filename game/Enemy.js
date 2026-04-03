@@ -24,7 +24,8 @@ class Enemy {
     this.hitFlash = 0;
     this.heading = Math.PI / 2; // default pointing down
     this.stuckTimer = 0;
-    this.lastY = 0;
+    this.lastX = -999;
+    this.lastY = -999;
 
     // Wanderer state
     const wCfg = config.wanderer;
@@ -65,10 +66,11 @@ class Enemy {
       return;
     }
 
-    // Stuck detection — if position hasn't changed in 1.5 seconds, force advance
-    if (Math.abs(this.y - this.lastY) < 0.01) {
+    // Stuck detection — if position hasn't changed in 1 second, force advance
+    const moved = Math.abs(this.x - this.lastX) > 0.05 || Math.abs(this.y - this.lastY) > 0.05;
+    if (!moved) {
       this.stuckTimer += dt;
-      if (this.stuckTimer > 1.5 && this.pathIndex < this.path.length - 1) {
+      if (this.stuckTimer > 1.0 && this.pathIndex < this.path.length - 1) {
         this.pathIndex++;
         const next = this.path[this.pathIndex];
         this.x = next.col;
@@ -76,11 +78,13 @@ class Enemy {
         this.col = next.col;
         this.row = next.row;
         this.stuckTimer = 0;
+        this.lastX = this.x;
         this.lastY = this.y;
         return;
       }
     } else {
       this.stuckTimer = 0;
+      this.lastX = this.x;
       this.lastY = this.y;
     }
 

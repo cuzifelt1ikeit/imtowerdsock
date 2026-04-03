@@ -238,12 +238,15 @@ class WaveManager {
     if (enemyData._leakKey) {
       enemy._leakKey = enemyData._leakKey;
     }
-    // Ensure position matches path start
-    enemy.x = path[0].col;
-    enemy.y = path[0].row;
-    enemy.col = path[0].col;
-    enemy.row = path[0].row;
+    // Set path and start at first waypoint, pointing toward second
     enemy.setPath(path);
+    // If path has more than 1 point, start moving toward point 1 immediately
+    if (path.length > 1) {
+      enemy.x = path[0].col;
+      enemy.y = path[0].row;
+      enemy.col = path[0].col;
+      enemy.row = path[0].row;
+    }
     this.enemies.push(enemy);
   }
 
