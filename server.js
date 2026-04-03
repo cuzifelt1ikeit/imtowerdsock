@@ -1,6 +1,7 @@
 // MARK: - Impossible Tower Defense — Multiplayer Socket Server
 // Authoritative game server for co-op multiplayer (2-4 players).
 
+require('dotenv').config();
 const http = require('http');
 const { Server } = require('socket.io');
 const fs = require('fs');
