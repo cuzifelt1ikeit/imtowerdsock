@@ -17,8 +17,31 @@ class Room {
   addPlayer(playerId, username, socketId) {
     if (this.players.size >= 4) return false;
     if (this.state !== 'lobby') return false;
-    this.players.set(playerId, { username, socketId });
+    this.players.set(playerId, { username, socketId, ready: false });
     return true;
+  }
+
+  toggleReady(playerId) {
+    const player = this.players.get(playerId);
+    if (!player) return false;
+    player.ready = !player.ready;
+    return true;
+  }
+
+  get allReady() {
+    if (this.players.size < 2) return false;
+    for (const p of this.players.values()) {
+      if (!p.ready) return false;
+    }
+    return true;
+  }
+
+  get readyCount() {
+    let count = 0;
+    for (const p of this.players.values()) {
+      if (p.ready) count++;
+    }
+    return count;
   }
 
   removePlayer(playerId) {
@@ -58,6 +81,7 @@ class Room {
         playerId: pid,
         username: info.username,
         isHost: pid === this.hostId,
+        ready: info.ready || false,
       });
     }
     return {
@@ -66,6 +90,8 @@ class Room {
       state: this.state,
       players,
       maxPlayers: 4,
+      readyCount: this.readyCount,
+      allReady: this.allReady,
     };
   }
 }

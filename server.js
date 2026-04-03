@@ -145,20 +145,33 @@ io.on('connection', (socket) => {
     ack?.({ success: true });
   });
 
-  // MARK: - Start Game
-  socket.on('start_game', (data, ack) => {
+  // MARK: - Toggle Ready
+  socket.on('toggle_ready', (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
 
     const room = roomManager.getPlayerRoom(playerId);
     if (!room) return ack?.({ success: false, reason: 'not_in_room' });
-    if (room.hostId !== playerId) return ack?.({ success: false, reason: 'not_host' });
-    if (room.players.size < 2) return ack?.({ success: false, reason: 'need_more_players' });
+    if (room.state !== 'lobby') return ack?.({ success: false, reason: 'game_in_progress' });
 
-    if (!room.startGame()) {
-      return ack?.({ success: false, reason: 'start_failed' });
+    room.toggleReady(playerId);
+    const lobbyState = room.tolobbyState();
+    io.to(room.code).emit('lobby_update', lobbyState);
+    console.log(`[room:ready] ${username} toggled ready in room ${room.code} (${lobbyState.readyCount}/${room.players.size})`);
+
+    // Auto-start if all 4 slots filled and everyone ready
+    if (room.players.size === 4 && room.allReady) {
+      console.log(`[room:autostart] All 4 players ready in room ${room.code}`);
+      if (room.startGame()) {
+        setupGameCallbacks(room);
+        io.to(room.code).emit('game_started', { playerIds: Array.from(room.players.keys()) });
+      }
     }
 
-    // Set up game callbacks
+    ack?.({ success: true, ready: room.players.get(playerId)?.ready });
+  });
+
+  // Helper: set up game callbacks for a room
+  function setupGameCallbacks(room) {
     room.game.onStateUpdate = (state) => {
       io.to(room.code).emit('game_state', state);
     };
@@ -168,12 +181,9 @@ io.on('connection', (socket) => {
       io.to(room.code).emit('game_over', results);
       console.log(`[game:over] Room ${room.code} — Wave ${results.waveReached}`);
 
-      // Submit results to Laravel
       try {
         const playerData = [];
         for (const [pid, stats] of Object.entries(results.players)) {
-          // Resolve player_id from the room's player info
-          const playerInfo = room.players.get(pid);
           playerData.push({
             player_id: parseInt(pid),
             total_kills: stats.totalKills,
@@ -206,8 +216,6 @@ io.on('connection', (socket) => {
 
         const data = await resp.json();
         console.log(`[api] Results submitted — Game #${data.game_id}, Group best: Wave ${data.group_best_wave}`);
-
-        // Broadcast group best back to players
         io.to(room.code).emit('group_best_updated', { bestWave: data.group_best_wave });
       } catch (err) {
         console.error(`[api] Failed to submit results:`, err.message);
@@ -216,6 +224,23 @@ io.on('connection', (socket) => {
 
     console.log(`[game:start] Room ${room.code} — ${room.players.size} players`);
     io.to(room.code).emit('game_started', { playerIds: Array.from(room.players.keys()) });
+  }
+
+  // MARK: - Start Game (host only, when all current players are ready)
+  socket.on('start_game', (data, ack) => {
+    if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
+
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room) return ack?.({ success: false, reason: 'not_in_room' });
+    if (room.hostId !== playerId) return ack?.({ success: false, reason: 'not_host' });
+    if (room.players.size < 2) return ack?.({ success: false, reason: 'need_more_players' });
+    if (!room.allReady) return ack?.({ success: false, reason: 'not_all_ready' });
+
+    if (!room.startGame()) {
+      return ack?.({ success: false, reason: 'start_failed' });
+    }
+
+    setupGameCallbacks(room);
     ack?.({ success: true });
   });
 
