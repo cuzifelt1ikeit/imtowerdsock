@@ -58,8 +58,17 @@ const PORT = process.env.PORT || 3001;
 const server = http.createServer((req, res) => {
   // Health check endpoint
   if (req.url === '/health') {
+    const rooms = [];
+    for (const [code, room] of roomManager.rooms) {
+      rooms.push({
+        code,
+        state: room.state,
+        players: Array.from(room.players.values()).map(p => p.username),
+        playerCount: room.players.size,
+      });
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', rooms: roomManager.rooms.size }));
+    res.end(JSON.stringify({ status: 'ok', roomCount: roomManager.rooms.size, rooms }));
     return;
   }
   res.writeHead(404);
@@ -349,6 +358,24 @@ io.on('connection', (socket) => {
 
     const result = room.game.handleAction(playerId, action);
     ack?.(result);
+  });
+
+  // MARK: - Spectate (admin only, ghost mode)
+  socket.on('spectate', (data, ack) => {
+    const code = (data.code || '').toUpperCase();
+    const room = roomManager.getRoom(code);
+    if (!room) return ack?.({ success: false, reason: 'room_not_found' });
+
+    // Join the room channel to receive game_state broadcasts — but don't add to players
+    socket.join(code);
+    console.log(`[spectate] Ghost joined room ${code}`);
+
+    // Send current game state immediately
+    if (room.game) {
+      socket.emit('game_state', room.game.getState());
+    }
+
+    ack?.({ success: true, state: room.state });
   });
 
   // MARK: - Chat
