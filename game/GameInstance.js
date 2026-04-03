@@ -269,6 +269,7 @@ class GameInstance {
       waveNumber: this.waveNumber,
       gameOver: this.gameOver,
       waveCountdown: Math.max(0, Math.round(this._betweenWaveTimer * 10) / 10),
+      allLanesActive: !this._allLanesCleared, // true when enemies are still alive somewhere
       lanes,
     };
   }
