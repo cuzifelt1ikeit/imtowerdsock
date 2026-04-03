@@ -425,6 +425,16 @@ io.on('connection', (socket) => {
       return;
     }
 
+    if (containsProfanity(msg)) {
+      socket.emit('chat_message', {
+        playerId: 'system',
+        username: 'System',
+        message: 'Message blocked — keep it clean.',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     io.to(room.code).emit('chat_message', {
       playerId,
       username,
