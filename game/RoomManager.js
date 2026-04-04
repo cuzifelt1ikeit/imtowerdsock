@@ -11,6 +11,7 @@ class Room {
     this.game = null;
     this.config = config;
     this.state = 'lobby'; // lobby | playing | finished
+    this.isPublic = true;  // public by default, host can toggle
     this.createdAt = Date.now();
   }
 
@@ -102,6 +103,7 @@ class Room {
       maxPlayers: 4,
       readyCount: this.readyCount,
       allReady: this.allReady,
+      isPublic: this.isPublic,
     };
   }
 }

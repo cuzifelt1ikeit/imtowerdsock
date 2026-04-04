@@ -148,13 +148,14 @@ io.on('connection', (socket) => {
     // Send current open lobbies
     const lobbies = [];
     for (const [code, room] of roomManager.rooms) {
-      if (room.state === 'lobby' && room.players.size < 4) {
+      if (room.state === 'lobby' && room.players.size < 4 && room.isPublic) {
         lobbies.push({
           code,
           hostUsername: room.players.get(room.hostId)?.username || '???',
           playerCount: room.players.size,
           maxPlayers: 4,
           players: Array.from(room.players.values()).map(p => p.username),
+          isPublic: room.isPublic,
         });
       }
     }
@@ -178,6 +179,7 @@ io.on('connection', (socket) => {
       playerCount: room.players.size,
       maxPlayers: 4,
       players: Array.from(room.players.values()).map(p => p.username),
+      isPublic: room.isPublic,
     };
   }
 
@@ -256,6 +258,27 @@ io.on('connection', (socket) => {
     }
 
     ack?.({ success: true, ready: room.players.get(playerId)?.ready });
+  });
+
+  // MARK: - Toggle Lobby Visibility (host only)
+  socket.on('toggle_visibility', (data, ack) => {
+    if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room) return ack?.({ success: false, reason: 'not_in_room' });
+    if (room.hostId !== playerId) return ack?.({ success: false, reason: 'not_host' });
+    if (room.state !== 'lobby') return ack?.({ success: false, reason: 'game_in_progress' });
+
+    room.isPublic = !room.isPublic;
+    io.to(room.code).emit('lobby_update', room.tolobbyState());
+    console.log(`[room:visibility] ${username} set room ${room.code} to ${room.isPublic ? 'public' : 'private'}`);
+
+    if (room.isPublic) {
+      broadcastLobbyBrowser('lobby_created', getLobbyInfo(room));
+    } else {
+      broadcastLobbyBrowser('lobby_closed', { code: room.code });
+    }
+
+    ack?.({ success: true, isPublic: room.isPublic });
   });
 
   // Helper: set up game callbacks for a room
