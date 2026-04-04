@@ -15,6 +15,8 @@ class Unit {
     this.fireCooldown = 0;
     this.splash = def.splash;
     this.splashRadius = def.splashRadius;
+    this.pierce = def.pierce || false;
+    this.pierceWidth = def.pierceWidth || 0.4;
     this.dot = def.dot;
     this.dotDamage = def.dotDamage;
     this.dotDuration = def.dotDuration;
@@ -90,7 +92,27 @@ class Bunker {
       if (target) {
         unit.fire();
 
-        if (unit.splash && unit.splashRadius > 0) {
+        if (unit.pierce) {
+          // Pierce: line from bunker through target, hits all enemies in corridor
+          const dirX = target.x - this.col;
+          const dirY = target.y - this.row;
+          const dirLen = Math.sqrt(dirX * dirX + dirY * dirY);
+          const nx = dirX / dirLen;
+          const ny = dirY / dirLen;
+          const pw = unit.pierceWidth;
+
+          for (const e of enemies) {
+            if (!e.alive) continue;
+            const ex = e.x - this.col;
+            const ey = e.y - this.row;
+            const proj = ex * nx + ey * ny;
+            if (proj < 0 || proj > unit.range) continue;
+            const perpDist = Math.abs(ex * ny - ey * nx);
+            if (perpDist <= pw) {
+              e.takeDamage(unit.damage);
+            }
+          }
+        } else if (unit.splash && unit.splashRadius > 0) {
           // Splash damage to all enemies near target
           for (const e of enemies) {
             if (!e.alive) continue;

@@ -264,6 +264,11 @@ io.on('connection', (socket) => {
       io.to(room.code).emit('game_state', state);
     };
 
+    // Discrete lane events — sent immediately for responsive UI
+    room.game.onLaneEvent = (playerId, event, data) => {
+      io.to(room.code).emit('lane_event', { playerId, event, ...data });
+    };
+
     room.game.onGameOver = async (results) => {
       room.state = 'finished';
       io.to(room.code).emit('game_over', results);

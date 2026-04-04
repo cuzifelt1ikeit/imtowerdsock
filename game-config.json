@@ -96,12 +96,14 @@
     "shotgun": {
       "name": "Shotgun",
       "shortName": "SG",
-      "cost": 40,
+      "cost": 45,
       "damage": 12,
       "fireRate": 2,
       "range": 2.0,
-      "splash": true,
-      "splashRadius": 0.8,
+      "splash": false,
+      "splashRadius": 0,
+      "pierce": true,
+      "pierceWidth": 0.4,
       "dot": false,
       "dotDamage": 0,
       "dotDuration": 0

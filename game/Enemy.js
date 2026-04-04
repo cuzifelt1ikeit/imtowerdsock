@@ -45,6 +45,7 @@ class Enemy {
   }
 
   update(dt, grid) {
+    this._grid = grid; // Store for stuck recovery
     if (this.hitFlash > 0) this.hitFlash -= dt;
     if (this.dots.length > 0) this._updateDots(dt);
     if (!this.alive) return;
@@ -66,17 +67,38 @@ class Enemy {
       return;
     }
 
-    // Stuck detection — if position hasn't changed in 1 second, force advance
+    // Stuck detection — if position hasn't changed, recalculate path
     const moved = Math.abs(this.x - this.lastX) > 0.05 || Math.abs(this.y - this.lastY) > 0.05;
     if (!moved) {
       this.stuckTimer += dt;
-      if (this.stuckTimer > 1.0 && this.pathIndex < this.path.length - 1) {
-        this.pathIndex++;
-        const next = this.path[this.pathIndex];
-        this.x = next.col;
-        this.y = next.row;
-        this.col = next.col;
-        this.row = next.row;
+      if (this.stuckTimer > 0.5 && this._grid) {
+        // Full path recalculation from current position
+        const curCol = Math.round(this.x);
+        const curRow = Math.round(this.y);
+        const newPath = this._grid.findPath(curCol, curRow, null);
+        if (newPath && newPath.length >= 2) {
+          this.path = newPath;
+          this.pathIndex = 0;
+          this.x = newPath[0].col;
+          this.y = newPath[0].row;
+          this.col = newPath[0].col;
+          this.row = newPath[0].row;
+        } else {
+          // No path from current position — respawn at top row with a fresh path
+          for (let c = 0; c < this._grid.cols; c++) {
+            const topPath = this._grid.findPath(c, 0, null);
+            if (topPath && topPath.length >= 2) {
+              this.path = topPath;
+              this.pathIndex = 0;
+              this.x = topPath[0].col;
+              this.y = topPath[0].row;
+              this.col = topPath[0].col;
+              this.row = topPath[0].row;
+              this.heading = Math.PI / 2;
+              break;
+            }
+          }
+        }
         this.stuckTimer = 0;
         this.lastX = this.x;
         this.lastY = this.y;

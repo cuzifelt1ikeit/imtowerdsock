@@ -223,7 +223,8 @@ class WaveManager {
   spawnTransfer(enemyData) {
     const id = this._nextEnemyId++;
 
-    // Try random column first, then all columns
+    // Find an open spawn column (top row, no bunker)
+    // Try random first, then sweep all columns
     let spawnCol = Math.floor(Math.random() * this.grid.cols);
     let path = this.grid.findPath(spawnCol, 0, null);
     if (!path) {
@@ -232,21 +233,25 @@ class WaveManager {
         if (path) { spawnCol = c; break; }
       }
     }
-    if (!path) return; // No valid path at all
+    if (!path || path.length < 2) return; // No valid path at all
 
     const enemy = new Enemy(id, spawnCol, 0, enemyData.hp, enemyData.speed, enemyData.type, true, this.config);
     if (enemyData._leakKey) {
       enemy._leakKey = enemyData._leakKey;
     }
-    // Set path and start at first waypoint, pointing toward second
-    enemy.setPath(path);
-    // If path has more than 1 point, start moving toward point 1 immediately
-    if (path.length > 1) {
-      enemy.x = path[0].col;
-      enemy.y = path[0].row;
-      enemy.col = path[0].col;
-      enemy.row = path[0].row;
-    }
+
+    // Always use pathfinder movement with a fresh full path
+    enemy.path = path;
+    enemy.pathIndex = 0;
+    enemy.x = path[0].col;
+    enemy.y = path[0].row;
+    enemy.col = path[0].col;
+    enemy.row = path[0].row;
+    enemy.heading = Math.PI / 2; // Face down
+    enemy.stuckTimer = 0;
+    enemy.lastX = enemy.x;
+    enemy.lastY = enemy.y;
+
     this.enemies.push(enemy);
   }
 
@@ -255,8 +260,23 @@ class WaveManager {
       if (!enemy.alive || !enemy.isPathfinder) continue;
       const currentCol = Math.round(enemy.x);
       const currentRow = Math.round(enemy.y);
-      const path = this.grid.findPath(currentCol, currentRow, null);
-      if (path) {
+      let path = this.grid.findPath(currentCol, currentRow, null);
+      // If no path from current cell (might be on a bunker), try nearby cells
+      if (!path) {
+        for (const [dc, dr] of [[0,1],[1,0],[-1,0],[0,-1],[1,1],[-1,1]]) {
+          const nc = currentCol + dc;
+          const nr = currentRow + dr;
+          if (nc >= 0 && nc < this.grid.cols && nr >= 0 && nr < this.grid.rows) {
+            path = this.grid.findPath(nc, nr, null);
+            if (path) {
+              enemy.x = nc;
+              enemy.y = nr;
+              break;
+            }
+          }
+        }
+      }
+      if (path && path.length >= 2) {
         enemy.path = path;
         enemy.pathIndex = 0;
       }

@@ -33,12 +33,16 @@ class Lane {
       }
     };
 
-    this.waveManager.onEnemyKilled = () => {
+    this.waveManager.onEnemyKilled = (enemy) => {
       this.cash += this.currentBounty;
       this.totalEarned += this.currentBounty;
       this.totalKills++;
       if (this.totalKills <= 3) {
         console.log(`[lane:${this.playerId}] Kill! +$${this.currentBounty}, cash now: $${this.cash}`);
+      }
+      // Emit kill event for immediate client cash update
+      if (this.onKillEvent) {
+        this.onKillEvent(this.currentBounty, this.cash);
       }
     };
 

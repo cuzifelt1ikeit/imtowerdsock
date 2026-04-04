@@ -33,7 +33,12 @@ class GameInstance {
     this._tickInterval = null;
     this._tickRate = 16; // ms (~60 ticks/sec)
     this._broadcastCounter = 0;
-    this._broadcastEvery = 1; // Send state every tick (~60fps)
+    this._broadcastEvery = 6; // Send state every 6 ticks (~10fps, interpolated on client)
+
+    // Stalled enemy scanner
+    this._stalledScanTimer = 0;
+    this._stalledScanInterval = 4; // seconds
+    this._lastEnemyPositions = new Map(); // enemyId -> { x, y, laneId }
 
     // Synchronized wave management
     this._allLanesCleared = false;
@@ -41,7 +46,8 @@ class GameInstance {
     this._waveQueued = false; // Flag: start wave on next tick
 
     // Callback for broadcasting state
-    this.onStateUpdate = null;
+    this.onStateUpdate = null;   // Full state (throttled ~10fps)
+    this.onLaneEvent = null;     // Discrete lane events (immediate)
     this.onGameOver = null;
   }
 
@@ -50,12 +56,19 @@ class GameInstance {
     if (this.lanes.has(playerId)) return false;
 
     const lane = new Lane(playerId, this.config);
-    lane.setup();
 
-    // Set up leak handling
+    // Set callbacks BEFORE setup() so they're available when wiring wave handlers
     lane.onEnemyEscaped = (enemy) => {
       this._handleLeak(playerId, enemy);
     };
+
+    lane.onKillEvent = (bounty, newCash) => {
+      if (this.onLaneEvent) {
+        this.onLaneEvent(playerId, 'enemy_killed', { bounty, cash: newCash });
+      }
+    };
+
+    lane.setup();
 
     // Sync wave starts across all lanes
     const originalOnWaveStart = lane.waveManager.onWaveStart;
@@ -139,6 +152,13 @@ class GameInstance {
       lane.update(dt);
     }
 
+    // Stalled enemy scanner — every 4s, check if any enemy hasn't moved
+    this._stalledScanTimer += dt;
+    if (this._stalledScanTimer >= this._stalledScanInterval) {
+      this._stalledScanTimer = 0;
+      this._scanForStalledEnemies();
+    }
+
     // Check game over
     if (this.sharedHp <= 0 && !this.gameOver) {
       this.gameOver = true;
@@ -154,6 +174,52 @@ class GameInstance {
       this._broadcastCounter = 0;
       this.onStateUpdate(this.getState());
     }
+  }
+
+  _scanForStalledEnemies() {
+    const currentPositions = new Map();
+
+    for (const [pid, lane] of this.lanes) {
+      for (const enemy of lane.waveManager.enemies) {
+        if (!enemy.alive) continue;
+        const key = `${pid}_${enemy.id}`;
+        const cx = Math.round(enemy.x * 100) / 100;
+        const cy = Math.round(enemy.y * 100) / 100;
+        currentPositions.set(key, { x: cx, y: cy, pid });
+
+        const prev = this._lastEnemyPositions.get(key);
+        if (prev && Math.abs(prev.x - cx) < 0.1 && Math.abs(prev.y - cy) < 0.1) {
+          // Enemy hasn't moved since last scan — respawn at top of its lane
+          const grid = lane.waveManager.grid;
+          let respawned = false;
+          for (let c = 0; c < grid.cols; c++) {
+            const path = grid.findPath(c, 0, null);
+            if (path && path.length >= 2) {
+              enemy.path = path;
+              enemy.pathIndex = 0;
+              enemy.x = path[0].col;
+              enemy.y = path[0].row;
+              enemy.col = path[0].col;
+              enemy.row = path[0].row;
+              enemy.heading = Math.PI / 2;
+              enemy.stuckTimer = 0;
+              enemy.lastX = enemy.x;
+              enemy.lastY = enemy.y;
+              respawned = true;
+              console.log(`[stalled] Respawned ${enemy.type} (id:${enemy.id}) to top of lane ${pid} at col ${c}`);
+              break;
+            }
+          }
+          if (!respawned) {
+            console.log(`[stalled] No path for ${enemy.type} (id:${enemy.id}) in lane ${pid} — killing`);
+            enemy.alive = false;
+            enemy.deathHandled = true;
+          }
+        }
+      }
+    }
+
+    this._lastEnemyPositions = currentPositions;
   }
 
   _startNextWaveAllLanes() {
@@ -229,14 +295,41 @@ class GameInstance {
     if (!lane) return { success: false, reason: 'invalid_player' };
 
     switch (action.type) {
-      case 'place_bunker':
-        return lane.placeBunker(action.col, action.row);
+      case 'place_bunker': {
+        const result = lane.placeBunker(action.col, action.row);
+        if (result.success && this.onLaneEvent) {
+          this.onLaneEvent(playerId, 'bunker_placed', {
+            col: action.col, row: action.row, cash: lane.cash,
+            grid: lane.grid.cells,
+          });
+        }
+        return result;
+      }
 
-      case 'add_unit':
-        return lane.addUnit(action.col, action.row, action.unitType);
+      case 'add_unit': {
+        const result = lane.addUnit(action.col, action.row, action.unitType);
+        if (result.success && this.onLaneEvent) {
+          const bunker = lane.bunkerManager.getBunker(action.col, action.row);
+          this.onLaneEvent(playerId, 'unit_added', {
+            col: action.col, row: action.row, cash: lane.cash,
+            bunker: bunker ? bunker.toState() : null,
+          });
+        }
+        return result;
+      }
 
-      case 'upgrade_unit':
-        return lane.upgradeUnit(action.col, action.row, action.unitIndex);
+      case 'upgrade_unit': {
+        const result = lane.upgradeUnit(action.col, action.row, action.unitIndex);
+        if (result.success && this.onLaneEvent) {
+          const bunker = lane.bunkerManager.getBunker(action.col, action.row);
+          this.onLaneEvent(playerId, 'unit_upgraded', {
+            col: action.col, row: action.row, unitIndex: action.unitIndex,
+            cash: lane.cash,
+            bunker: bunker ? bunker.toState() : null,
+          });
+        }
+        return result;
+      }
 
       case 'send_early': {
         // First wave — any player can start the game
