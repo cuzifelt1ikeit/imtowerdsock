@@ -64,15 +64,19 @@ class WaveManager {
       }
     }
 
-    // Update enemies
+    // Update enemies (movement only)
     for (const enemy of this.enemies) {
       if (!enemy.alive) continue;
       enemy.update(dt, this.grid);
+    }
 
-      if (enemy.escaped && !enemy.deathHandled) {
+    // Handle escapes and deaths (separate pass so bunker kills from last frame are caught)
+    for (const enemy of this.enemies) {
+      if (enemy.deathHandled) continue;
+      if (enemy.escaped) {
         enemy.deathHandled = true;
         if (this.onEnemyEscaped) this.onEnemyEscaped(enemy);
-      } else if (!enemy.alive && !enemy.escaped && !enemy.deathHandled) {
+      } else if (!enemy.alive) {
         enemy.deathHandled = true;
         if (this.onEnemyKilled) this.onEnemyKilled(enemy);
       }
