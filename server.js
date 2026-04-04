@@ -16,8 +16,67 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 // Set wanderer weights on Enemy prototype
 Enemy.setWandererWeights(config);
 
-// Laravel API config
-const LARAVEL_API = process.env.LARAVEL_API_URL || 'https://imptowerdef.on-forge.com/api';
+// Laravel API config (use localhost if same VPS, otherwise external URL)
+const IS_LOCALHOST = process.env.LARAVEL_API_URL === undefined;
+const LARAVEL_API = IS_LOCALHOST ? 'http://localhost:8000/api' : process.env.LARAVEL_API_URL || 'https://imptowerdef.on-forge.com/api';
+
+// Cache for player stats (TTL: 60s)
+const statsCache = new Map();
+const STATS_CACHE_TTL = 60000;
+
+// Cache for group best (TTL: 30s)
+const groupBestCache = new Map();
+const GROUP_BEST_CACHE_TTL = 30000;
+
+// Helper: get cached player stats
+function getCachedPlayerStats(playerIds) {
+  const now = Date.now();
+  let cached = statsCache.get('mp_players');
+  
+  if (cached && now - cached.timestamp < STATS_CACHE_TTL) {
+    return cached.data;
+  }
+  
+  // Fetch fresh from Laravel
+  fetchAndCacheStats(playerIds);
+  return statsCache.get('mp_players').data;
+}
+
+function fetchAndCacheStats(playerIds) {
+  const encodedIds = playerIds.join(',');
+  fetch(`${LARAVEL_API}/mp/lobby-players?player_ids=${encodedIds}`)
+    .then(res => res.json())
+    .then(data => {
+      statsCache.set('mp_players', { data, timestamp: now });
+    })
+    .catch(err => {
+      console.error('[cache] Failed to fetch stats:', err.message);
+    });
+}
+
+// Helper: get cached group best
+function getCachedGroupBest(playerIds) {
+  const now = Date.now();
+  let cached = groupBestCache.get(playerIds.sort().join(','));
+  
+  if (cached && now - cached.timestamp < GROUP_BEST_CACHE_TTL) {
+    return cached.data;
+  }
+  
+  // Fetch fresh
+  fetch(`${LARAVEL_API}/mp/group-best?player_ids=${playerIds.sort().join(',')}`)
+    .then(res => res.json())
+    .then(data => {
+      const key = playerIds.sort().join(',');
+      groupBestCache.set(key, { data, timestamp: now });
+    })
+    .catch(err => {
+      console.error('[cache] Failed to fetch group best:', err.message);
+      return null;
+    });
+  
+  return null;
+}
 const SERVER_KEY = process.env.GAME_SERVER_KEY || '';
 
 // Profanity filter (same list as Laravel CleanUsername rule)
@@ -67,10 +126,25 @@ const server = http.createServer((req, res) => {
         playerCount: room.players.size,
       });
     }
+    
+    // Include cache stats
+    const cacheInfo = {
+      playerStatsCacheSize: statsCache.size,
+      groupBestCacheSize: groupBestCache.size,
+      cacheTTL: STATS_CACHE_TTL,
+    };
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', roomCount: roomManager.rooms.size, rooms }));
+    res.end(JSON.stringify({ 
+      status: 'ok', 
+      roomCount: roomManager.rooms.size, 
+      rooms, 
+      cache: cacheInfo 
+    }));
     return;
   }
+  
+  // 404 for everything else
   res.writeHead(404);
   res.end();
 });
@@ -184,7 +258,7 @@ io.on('connection', (socket) => {
   }
 
   // MARK: - Create Room
-  socket.on('create_room', (data, ack) => {
+  socket.on('create_room', async (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
 
     const room = roomManager.createRoom(playerId, username, socket.id);
@@ -193,11 +267,22 @@ io.on('connection', (socket) => {
 
     ack?.({ success: true, code: room.code });
     io.to(room.code).emit('lobby_update', room.tolobbyState());
+    
+    // Pre-fetch lobby data for all players in room (one batch request)
+    const playerIds = Array.from(room.players.keys()).map(id => parseInt(id));
+    await fetchAndCacheStats(playerIds);
+    
+    // Fetch group best for existing players
+    const existingPlayerIds = playerIds.filter(pid => room.players.get(pid)?.ready); // existing players
+    if (existingPlayerIds.length > 0) {
+      await getCachedGroupBest(existingPlayerIds);
+    }
+    
     broadcastLobbyBrowser('lobby_created', getLobbyInfo(room));
   });
 
   // MARK: - Join Room
-  socket.on('join_room', (data, ack) => {
+  socket.on('join_room', async (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
 
     const result = roomManager.joinRoom(data.code, playerId, username, socket.id);
@@ -210,6 +295,11 @@ io.on('connection', (socket) => {
 
     ack?.({ success: true, code: data.code.toUpperCase() });
     io.to(data.code.toUpperCase()).emit('lobby_update', result.room.tolobbyState());
+    
+    // Pre-fetch data for joined player
+    const playerIds = Array.from(result.room.players.keys()).map(id => parseInt(id));
+    await fetchAndCacheStats(playerIds);
+    
     broadcastLobbyBrowser('lobby_updated', getLobbyInfo(result.room));
   });
 
@@ -326,6 +416,8 @@ io.on('connection', (socket) => {
           headers: {
             'Content-Type': 'application/json',
             'X-Server-Key': SERVER_KEY,
+            'Accept-Encoding': 'gzip',
+            'Connection': IS_LOCALHOST ? 'keep-alive' : undefined,
           },
           body,
         });
@@ -475,6 +567,21 @@ io.on('connection', (socket) => {
     ack?.({ success: true, state: room.state });
   });
 
+  // MARK: - Get Group Best (cached)
+  socket.on('get_group_best', async (data, ack) => {
+    if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
+
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room) return ack?.({ success: false, reason: 'not_in_room' });
+
+    const playerIds = Array.from(room.players.keys()).map(id => parseInt(id));
+    
+    // Use cached version
+    const result = await getCachedGroupBest(playerIds);
+    
+    ack?.({ success: true, data: result || { has_history: false, best_wave: 0 } });
+  });
+
   // MARK: - Chat
   socket.on('chat_message', async (data) => {
     if (!playerId) return;
@@ -526,6 +633,8 @@ io.on('connection', (socket) => {
           headers: {
             'Content-Type': 'application/json',
             'X-Server-Key': SERVER_KEY,
+            'Accept-Encoding': 'gzip',
+            'Connection': IS_LOCALHOST ? 'keep-alive' : undefined,
           },
           body: JSON.stringify({ player_ids: playerIds, team_name: newName }),
         });
