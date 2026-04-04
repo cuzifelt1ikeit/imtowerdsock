@@ -139,10 +139,15 @@ class GameInstance {
       if (allCleared && !this._allLanesCleared) {
         this._allLanesCleared = true;
         this._betweenWaveTimer = this.config.waves.betweenDuration;
+
+        // Announce wave kill stats before resetting
+        this._announceWaveStats();
+
         for (const lane of this.lanes.values()) {
           lane.waveManager.enemies = [];
           lane.waveManager.waveActive = false;
           lane.waveManager.waveCleared = true;
+          lane.waveKills = 0; // Reset per-wave kills
         }
         console.log(`[wave] All lanes cleared wave ${this.waveNumber}, next in ${this.config.waves.betweenDuration}s`);
       }
@@ -173,6 +178,30 @@ class GameInstance {
     if (this._broadcastCounter >= this._broadcastEvery && this.onStateUpdate) {
       this._broadcastCounter = 0;
       this.onStateUpdate(this.getState());
+    }
+  }
+
+  _announceWaveStats() {
+    if (this.lanes.size < 2) return;
+
+    let mostKills = { pid: null, kills: -1, name: '' };
+    let leastKills = { pid: null, kills: Infinity, name: '' };
+
+    for (const [pid, lane] of this.lanes) {
+      const name = this._getPlayerUsername(pid);
+      if (lane.waveKills > mostKills.kills) {
+        mostKills = { pid, kills: lane.waveKills, name };
+      }
+      if (lane.waveKills < leastKills.kills) {
+        leastKills = { pid, kills: lane.waveKills, name };
+      }
+    }
+
+    if (mostKills.pid) {
+      this._announceChat(`🏆 ${mostKills.name} led the wave with ${mostKills.kills} kills!`);
+    }
+    if (leastKills.pid && leastKills.pid !== mostKills.pid) {
+      this._announceChat(`😬 ${leastKills.name} had the fewest kills: ${leastKills.kills}`);
     }
   }
 

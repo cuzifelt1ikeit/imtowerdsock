@@ -16,6 +16,7 @@ class Lane {
     this.totalEarned = 0;
     this.totalKills = 0;
     this.totalLeaked = 0;
+    this.waveKills = 0;
     this.bunkersBuilt = 0;
     this.troopsPurchased = { mg: 0, sg: 0, sn: 0, ft: 0 };
     this.troopsUpgraded = { mg: 0, sg: 0, sn: 0, ft: 0 };
@@ -37,6 +38,7 @@ class Lane {
       this.cash += this.currentBounty;
       this.totalEarned += this.currentBounty;
       this.totalKills++;
+      this.waveKills++;
       if (this.totalKills <= 3) {
         console.log(`[lane:${this.playerId}] Kill! +$${this.currentBounty}, cash now: $${this.cash}`);
       }
