@@ -529,7 +529,20 @@ class GameInstance {
 
         const prev = this._lastEnemyPositions.get(key);
         if (prev && Math.abs(prev.x - cx) < 0.1 && Math.abs(prev.y - cy) < 0.1) {
-          // Enemy hasn't moved since last scan — respawn at top of its lane
+          // Enemy hasn't moved since last scan
+          const stalledCount = (prev.stalledCount || 0) + 1;
+          currentPositions.get(key).stalledCount = stalledCount;
+
+          // If stuck on spawn row for 2+ consecutive checks, treat as leaked
+          if (stalledCount >= 2 && Math.round(cy) <= 0) {
+            console.log(`[stalled] ${enemy.type} (id:${enemy.id}) stuck on spawn row in lane ${pid} for ${stalledCount} checks — treating as leak`);
+            enemy.alive = false;
+            enemy.deathHandled = true;
+            this._handleLeak(pid, enemy);
+            continue;
+          }
+
+          // Otherwise try to respawn at a valid path
           const grid = lane.waveManager.grid;
           let respawned = false;
           for (let c = 0; c < grid.cols; c++) {
@@ -558,9 +571,10 @@ class GameInstance {
             }
           }
           if (!respawned) {
-            console.log(`[stalled] No path for ${enemy.type} (id:${enemy.id}) in lane ${pid} — killing`);
+            console.log(`[stalled] No path for ${enemy.type} (id:${enemy.id}) in lane ${pid} — treating as leak`);
             enemy.alive = false;
             enemy.deathHandled = true;
+            this._handleLeak(pid, enemy);
           }
         }
       }
