@@ -468,6 +468,7 @@ io.on('connection', (socket) => {
             bunkers_built: stats.bunkersBuilt,
             troops_purchased: stats.troopsPurchased,
             troops_upgraded: stats.troopsUpgraded,
+            maze_length: stats.mazeLength || 0,
           });
         }
 
