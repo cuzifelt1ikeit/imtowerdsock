@@ -358,6 +358,19 @@ io.on('connection', (socket) => {
       // Update remaining players
       const updatedRoom = roomManager.getRoom(code);
       if (updatedRoom) {
+        // If return votes are pending and all remaining have voted, trigger return
+        if (updatedRoom._returnVotes) {
+          updatedRoom._returnVotes.delete(playerId);
+          const allVoted = Array.from(updatedRoom.players.keys()).every(pid => updatedRoom._returnVotes.has(pid));
+          if (allVoted && updatedRoom.players.size > 0) {
+            if (updatedRoom.game) { updatedRoom.game.stop(); updatedRoom.game = null; }
+            updatedRoom.state = 'lobby';
+            updatedRoom._returnVotes = null;
+            for (const [, info] of updatedRoom.players) info.ready = false;
+            io.to(code).emit('returned_to_lobby', {});
+            io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
+          }
+        }
         io.to(code).emit('lobby_update', updatedRoom.tolobbyState());
         broadcastLobbyBrowser('lobby_updated', getLobbyInfo(updatedRoom));
       } else {
@@ -596,28 +609,49 @@ io.on('connection', (socket) => {
     ack?.({ success: true });
   });
 
-  // MARK: - Return to Lobby
+  // MARK: - Return to Lobby (individual choice)
   socket.on('return_to_lobby', (data, ack) => {
     if (!playerId) return;
     const room = roomManager.getPlayerRoom(playerId);
     if (!room) return;
 
-    // Stop the game if running
-    if (room.game) {
-      room.game.stop();
-      room.game = null;
+    // Track who wants to return
+    if (!room._returnVotes) room._returnVotes = new Set();
+    room._returnVotes.add(playerId);
+
+    console.log(`[room:return] ${username} voted to return in room ${room.code} (${room._returnVotes.size}/${room.players.size})`);
+
+    // Check if all remaining players have voted
+    const allVoted = Array.from(room.players.keys()).every(pid => room._returnVotes.has(pid));
+
+    if (allVoted) {
+      // Stop the game if running
+      if (room.game) {
+        room.game.stop();
+        room.game = null;
+      }
+
+      // Reset room to lobby state
+      room.state = 'lobby';
+      room._returnVotes = null;
+      for (const [pid, info] of room.players) {
+        info.ready = false;
+      }
+
+      io.to(room.code).emit('returned_to_lobby', {});
+      io.to(room.code).emit('lobby_update', room.tolobbyState());
+      console.log(`[room:lobby] All players returned room ${room.code} to lobby`);
+      broadcastLobbyBrowser('lobby_returned', getLobbyInfo(room));
+    } else {
+      // Let others know this player is waiting
+      io.to(room.code).emit('player_return_vote', {
+        playerId,
+        username,
+        votedCount: room._returnVotes.size,
+        totalCount: room.players.size,
+      });
     }
 
-    // Reset room to lobby state
-    room.state = 'lobby';
-    for (const [pid, info] of room.players) {
-      info.ready = false;
-    }
-
-    io.to(room.code).emit('returned_to_lobby', {});
-    io.to(room.code).emit('lobby_update', room.tolobbyState());
-    console.log(`[room:lobby] ${username} returned room ${room.code} to lobby`);
-    broadcastLobbyBrowser('lobby_returned', getLobbyInfo(room));
     ack?.({ success: true });
   });
 
