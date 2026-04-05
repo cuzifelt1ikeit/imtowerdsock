@@ -336,7 +336,7 @@ class GameInstance {
     this._tickInterval = null;
     this._tickRate = 16; // ms (~60 ticks/sec)
     this._broadcastCounter = 0;
-    this._broadcastEvery = 6; // Send state every 6 ticks (~10fps, interpolated on client)
+    this._broadcastEvery = 3; // Send state every 3 ticks (~20fps, interpolated on client)
 
     // Stalled enemy scanner
     this._stalledScanTimer = 0;
@@ -478,14 +478,11 @@ class GameInstance {
       }
     }
 
-    // Broadcast state (throttled with delta encoding)
+    // Broadcast state (throttled, full state each time — delta encoding removed for reliability)
     this._broadcastCounter++;
     if (this._broadcastCounter >= this._broadcastEvery && this.onStateUpdate) {
       this._broadcastCounter = 0;
-      const state = this.getState();
-      const { state: deltaState, prev } = createDeltaState(state, this._previousState);
-      this._previousState = prev;
-      this.onStateUpdate(deltaState);
+      this.onStateUpdate(this.getState());
     }
   }
 
