@@ -188,12 +188,13 @@ class Lane {
   }
 
   // Receive a transferred enemy from another lane
+  // Returns false if the enemy couldn't be placed (no valid path)
   receiveEnemy(enemyData) {
-    this.waveManager.spawnTransfer(enemyData);
+    return this.waveManager.spawnTransfer(enemyData);
   }
 
   toState() {
-    const state = {
+    return {
       playerId: this.playerId,
       cash: this.cash,
       waveNumber: this.waveManager.waveNumber,
@@ -202,15 +203,10 @@ class Lane {
       enemiesRemaining: this.waveManager.enemiesRemaining,
       enemies: this.waveManager.enemies.filter(e => e.alive).map(e => e.toState()),
       bunkers: this.bunkerManager.allBunkers.map(b => b.toState()),
+      grid: this.grid.cells,
       totalKills: this.totalKills,
       totalLeaked: this.totalLeaked,
     };
-    // Only include grid when it has changed (bunker placement) to save bandwidth
-    if (this._gridDirty) {
-      state.grid = this.grid.cells;
-      this._gridDirty = false;
-    }
-    return state;
   }
 }
 

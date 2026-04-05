@@ -256,7 +256,7 @@ class WaveManager {
         if (path) { spawnCol = c; break; }
       }
     }
-    if (!path || path.length < 2) return; // No valid path at all
+    if (!path || path.length < 2) return false; // No valid path at all
 
     // Use pooled enemy if available
     let enemy;
@@ -284,6 +284,7 @@ class WaveManager {
     enemy.lastY = enemy.y;
 
     this.enemies.push(enemy);
+    return true;
   }
 
   recalculatePaths() {

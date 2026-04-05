@@ -325,10 +325,6 @@ class GameInstance {
     this.startTime = null;
     this.waveNumber = 0;
 
-    // Track which enemies have visited which lanes (to prevent infinite loops)
-    // Key: original enemy signature, Value: Set of playerIds it has visited
-    this._leakTracker = new Map();
-    this._leakId = 0;
 
     // Per-instance delta state tracking (NOT module-level)
     this._previousState = null;
@@ -348,6 +344,11 @@ class GameInstance {
     this._betweenWaveTimer = 0;
     this._waveQueued = false; // Flag: start wave on next tick
     this._sendEarlyProcessed = false; // Guard against duplicate send_early
+
+    // Lane chain routing — shuffled each wave
+    // Chain is an ordered array of player IDs: enemies flow A → B → C → ... → HP damage
+    this._laneChain = [];
+    this._laneRouting = new Map(); // playerId → nextPlayerId (null = last in chain)
 
     // Callback for broadcasting state
     this.onStateUpdate = null;   // Full state (throttled ~10fps)
@@ -583,9 +584,35 @@ class GameInstance {
     this._lastEnemyPositions = currentPositions;
   }
 
+  _buildLaneRouting(pids) {
+    this._laneChain = pids;
+    this._laneRouting = new Map();
+    for (let i = 0; i < pids.length; i++) {
+      this._laneRouting.set(pids[i], i < pids.length - 1 ? pids[i + 1] : null);
+    }
+    console.log(`[wave] Lane chain: ${pids.join(' → ')} → HP`);
+  }
+
+  _shuffleLaneChain() {
+    const pids = Array.from(this.lanes.keys());
+    // Fisher-Yates shuffle
+    for (let i = pids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pids[i], pids[j]] = [pids[j], pids[i]];
+    }
+    this._buildLaneRouting(pids);
+  }
+
   _startNextWaveAllLanes() {
     this.waveNumber++;
     this._allLanesCleared = false;
+
+    // Wave 1: fixed order. Wave 2+: shuffle. 2 players: never shuffle.
+    if (this.waveNumber === 1) {
+      this._buildLaneRouting(Array.from(this.lanes.keys()));
+    } else if (this.lanes.size > 2) {
+      this._shuffleLaneChain();
+    }
 
     // In MP, wave difficulty is offset (wave 1 plays like wave 6 in SP)
     const difficultyWave = this.waveNumber + (this.config._mpStartWave || 0);
@@ -610,52 +637,47 @@ class GameInstance {
   }
 
   _handleLeak(fromPlayerId, enemy) {
-    // Create or get leak tracking ID
-    const leakKey = enemy._leakKey || `leak_${this._leakId++}`;
-    if (!enemy._leakKey) enemy._leakKey = leakKey;
+    // Walk the chain from the current lane forward
+    let currentPid = fromPlayerId;
 
-    if (!this._leakTracker.has(leakKey)) {
-      this._leakTracker.set(leakKey, new Set());
-    }
-    const visited = this._leakTracker.get(leakKey);
-    visited.add(fromPlayerId);
+    while (true) {
+      const nextPlayerId = this._laneRouting.get(currentPid);
 
-    // Find lanes this enemy hasn't visited yet (excluding the one it just came from)
-    const availableLanes = [];
-    for (const [pid] of this.lanes) {
-      if (!visited.has(pid)) {
-        availableLanes.push(pid);
+      if (nextPlayerId === null || nextPlayerId === undefined) {
+        // End of chain — deal damage to shared HP
+        const leakDamage = this.config.enemies[enemy.type].leakDamage;
+        this.sharedHp = Math.max(0, this.sharedHp - leakDamage);
+
+        if (this.onLaneEvent) {
+          this.onLaneEvent(currentPid, 'leak_damage', {
+            enemyType: enemy.type,
+            damage: leakDamage,
+            sharedHp: Math.round(this.sharedHp),
+            maxHp: this.maxHp,
+          });
+        }
+        return;
       }
-    }
 
-    if (availableLanes.length > 0) {
-      // Random lane assignment
-      const targetId = availableLanes[Math.floor(Math.random() * availableLanes.length)];
-      const targetLane = this.lanes.get(targetId);
-
-      // Transfer enemy with remaining HP and leak tracking key
-      const transferHp = enemy.hp > 0 ? enemy.hp : this.config.enemies[enemy.type].hp;
-      targetLane.receiveEnemy({
-        type: enemy.type,
-        hp: transferHp,
-        speed: enemy.speed,
-        _leakKey: leakKey,
-      });
-      console.log(`[leak] ${enemy.type} transferred from ${fromPlayerId} to ${targetId} (hp: ${Math.round(transferHp)}, visited: ${visited.size}/${this.lanes.size})`);
-    } else {
-      // Enemy survived ALL lanes — deal damage to shared HP
-      const leakDamage = this.config.enemies[enemy.type].leakDamage;
-      this.sharedHp = Math.max(0, this.sharedHp - leakDamage);
-      this._leakTracker.delete(leakKey);
-
-      // Immediately broadcast leak damage so clients update HP without waiting for next tick
-      if (this.onLaneEvent) {
-        this.onLaneEvent(fromPlayerId, 'leak_damage', {
-          enemyType: enemy.type,
-          damage: leakDamage,
-          sharedHp: Math.round(this.sharedHp),
-          maxHp: this.maxHp,
+      const targetLane = this.lanes.get(nextPlayerId);
+      if (targetLane) {
+        const transferHp = enemy.hp > 0 ? enemy.hp : this.config.enemies[enemy.type].hp;
+        const placed = targetLane.receiveEnemy({
+          type: enemy.type,
+          hp: transferHp,
+          speed: enemy.speed,
         });
+
+        if (placed) {
+          console.log(`[leak] ${enemy.type} chained from ${fromPlayerId} → ${nextPlayerId} (hp: ${Math.round(transferHp)})`);
+          return;
+        }
+
+        // Couldn't place — skip this lane and try next in chain
+        console.log(`[leak] ${enemy.type} couldn't place in ${nextPlayerId} (blocked) — skipping to next`);
+        currentPid = nextPlayerId;
+      } else {
+        currentPid = nextPlayerId;
       }
     }
   }
@@ -760,6 +782,16 @@ class GameInstance {
       lanes[pid] = lane.toState();
     }
 
+    // Build routing map with color indices for each lane
+    const routing = {};
+    for (const [pid] of this.lanes) {
+      const nextPid = this._laneRouting.get(pid);
+      routing[pid] = {
+        nextPlayerId: nextPid,
+        chainIndex: this._laneChain.indexOf(pid),
+      };
+    }
+
     return {
       roomId: this.roomId,
       sharedHp: Math.round(this.sharedHp),
@@ -769,6 +801,8 @@ class GameInstance {
       waveCountdown: Math.max(0, Math.round(this._betweenWaveTimer * 10) / 10),
       allLanesActive: !this._allLanesCleared,
       waitingForStart: this._waitingForFirstWave || false,
+      laneChain: this._laneChain,
+      routing,
       lanes,
     };
   }

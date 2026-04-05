@@ -18,8 +18,11 @@ class Room {
   addPlayer(playerId, username, socketId) {
     if (this.players.size >= 4) return false;
     if (this.state !== 'lobby') return false;
-    this.players.set(playerId, { username, socketId, ready: false, colorIndex: 0 });
-    this._reassignColors();
+    // Find first open slot
+    const takenSlots = new Set(Array.from(this.players.values()).map(p => p.colorIndex));
+    let slot = 0;
+    while (takenSlots.has(slot) && slot < 4) slot++;
+    this.players.set(playerId, { username, socketId, ready: false, colorIndex: slot });
     return true;
   }
 
@@ -54,14 +57,6 @@ class Room {
     // If host leaves, assign new host
     if (playerId === this.hostId && this.players.size > 0) {
       this.hostId = this.players.keys().next().value;
-    }
-    this._reassignColors();
-  }
-
-  _reassignColors() {
-    let i = 0;
-    for (const [, info] of this.players) {
-      info.colorIndex = i++;
     }
   }
 

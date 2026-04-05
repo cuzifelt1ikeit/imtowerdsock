@@ -136,6 +136,10 @@ initCachedConfig();
 
 const PORT = process.env.PORT || 3001;
 
+// Track peak concurrent players
+let peakConcurrentPlayers = 0;
+let currentConnections = 0;
+
 const server = http.createServer((req, res) => {
   // Health check endpoint
   if (req.url === '/health') {
@@ -156,12 +160,23 @@ const server = http.createServer((req, res) => {
       cacheTTL: STATS_CACHE_TTL,
     };
 
+    const mem = process.memoryUsage();
+    const totalPlayers = Array.from(roomManager.rooms.values()).reduce((sum, r) => sum + r.players.size, 0);
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'ok', 
-      roomCount: roomManager.rooms.size, 
-      rooms, 
-      cache: cacheInfo 
+    res.end(JSON.stringify({
+      status: 'ok',
+      roomCount: roomManager.rooms.size,
+      rooms,
+      activePlayers: totalPlayers,
+      peakConcurrentPlayers,
+      uptimeSeconds: Math.floor(process.uptime()),
+      memory: {
+        rss: Math.round(mem.rss / 1024 / 1024),
+        heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+      cache: cacheInfo,
     }));
     return;
   }
@@ -189,7 +204,12 @@ io.on('connection', (socket) => {
   let playerId = null;
   let username = null;
 
+  currentConnections++;
+  if (currentConnections > peakConcurrentPlayers) {
+    peakConcurrentPlayers = currentConnections;
+  }
   console.log(`[connect] ${socket.id}`);
+  broadcastAdminStats();
 
   // MARK: - Auth (with reconnection)
   socket.on('auth', (data, ack) => {
@@ -393,6 +413,29 @@ io.on('connection', (socket) => {
     ack?.({ success: true, isPublic: room.isPublic });
   });
 
+  // MARK: - Request Slot (change position/color)
+  socket.on('request_slot', (data, ack) => {
+    if (!playerId) return ack?.({ success: false });
+    const room = roomManager.getPlayerRoom(playerId);
+    if (!room || room.state !== 'lobby') return ack?.({ success: false });
+
+    const targetSlot = data.slotIndex;
+    if (targetSlot < 0 || targetSlot > 3) return ack?.({ success: false });
+
+    // Check if slot is taken
+    const occupant = Array.from(room.players.entries()).find(([, info]) => info.colorIndex === targetSlot);
+    if (occupant) return ack?.({ success: false, reason: 'slot_taken' });
+
+    // Move player to new slot
+    const playerInfo = room.players.get(playerId);
+    if (playerInfo) {
+      playerInfo.colorIndex = targetSlot;
+      io.to(room.code).emit('lobby_update', room.tolobbyState());
+      console.log(`[room:slot] ${username} moved to slot ${targetSlot} in room ${room.code}`);
+    }
+    ack?.({ success: true });
+  });
+
   // Helper: set up game callbacks for a room
   function setupGameCallbacks(room) {
     // Reset delta tracking for new game
@@ -452,6 +495,19 @@ io.on('connection', (socket) => {
         const data = await resp.json();
         console.log(`[api] Results submitted — Game #${data.game_id}, Group best: Wave ${data.group_best_wave}`);
         io.to(room.code).emit('group_best_updated', { bestWave: data.group_best_wave });
+
+        // Notify admin dashboard
+        broadcastAdminGame({
+          type: 'mp',
+          name: room.game?._playerNames ? Object.values(room.game._playerNames).join(', ') : 'Unknown',
+          wave_reached: results.waveReached,
+          total_kills: playerData.reduce((s, p) => s + p.total_kills, 0),
+          bunkers_built: playerData.reduce((s, p) => s + p.bunkers_built, 0),
+          total_earned: playerData.reduce((s, p) => s + p.total_earned, 0),
+          duration: results.durationSeconds,
+          time_ago: 'just now',
+        });
+        broadcastAdminStats();
       } catch (err) {
         console.error(`[api] Failed to submit results:`, err.message);
       }
@@ -594,6 +650,14 @@ io.on('connection', (socket) => {
     ack?.({ success: true, state: room.state });
   });
 
+  // MARK: - Admin Dashboard (live updates)
+  socket.on('join_admin', (data, ack) => {
+    socket.join('admin-dashboard');
+    socket.emit('admin_stats', getAdminStats());
+    console.log(`[admin] Dashboard client connected`);
+    ack?.({ success: true });
+  });
+
   // MARK: - Get Group Best (cached)
   socket.on('get_group_best', async (data, ack) => {
     if (!playerId) return ack?.({ success: false, reason: 'not_authenticated' });
@@ -707,7 +771,9 @@ io.on('connection', (socket) => {
 
   // MARK: - Disconnect (with reconnection grace period)
   socket.on('disconnect', () => {
+    currentConnections = Math.max(0, currentConnections - 1);
     console.log(`[disconnect] ${username || socket.id}`);
+    broadcastAdminStats();
     if (!playerId) return;
 
     const room = roomManager.getPlayerRoom(playerId);
@@ -749,6 +815,38 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// MARK: - Admin Live Dashboard
+
+function getAdminStats() {
+  const mem = process.memoryUsage();
+  const totalPlayers = Array.from(roomManager.rooms.values()).reduce((sum, r) => sum + r.players.size, 0);
+  const load = require('os').loadavg();
+  const cpus = require('os').cpus().length;
+  return {
+    activeRooms: roomManager.rooms.size,
+    activePlayers: totalPlayers,
+    peakConcurrentPlayers,
+    uptimeSeconds: Math.floor(process.uptime()),
+    cpuUsage: Math.round(load[0] * 100 / cpus * 10) / 10,
+    memory: {
+      rss: Math.round(mem.rss / 1024 / 1024),
+      heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+    },
+  };
+}
+
+function broadcastAdminStats() {
+  io.to('admin-dashboard').emit('admin_stats', getAdminStats());
+}
+
+function broadcastAdminGame(game) {
+  io.to('admin-dashboard').emit('admin_game', game);
+}
+
+// Emit health stats to admin dashboard every 5 minutes
+setInterval(() => broadcastAdminStats(), 5 * 60 * 1000);
 
 server.listen(PORT, () => {
   console.log(`🏰 Impossible Tower Defense — Socket Server`);
