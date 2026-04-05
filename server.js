@@ -8,13 +8,9 @@ const fs = require('fs');
 const path = require('path');
 const { RoomManager } = require('./game/RoomManager');
 const { Enemy } = require('./game/Enemy');
+const compression = require('compression');
 
-// Load shared game config
-const configPath = path.join(__dirname, 'game-config.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-// Set wanderer weights on Enemy prototype
-Enemy.setWandererWeights(config);
+// Server created below after config and helpers are defined
 
 // Laravel API config (use localhost if same VPS, otherwise external URL)
 const IS_LOCALHOST = process.env.LARAVEL_API_URL === undefined;
@@ -28,54 +24,72 @@ const STATS_CACHE_TTL = 60000;
 const groupBestCache = new Map();
 const GROUP_BEST_CACHE_TTL = 30000;
 
+// CACHED CONFIG — initialized once at startup, not destructured on every tick
+const CONFIG = {
+  waves: {},
+  enemies: {},
+  bunkers: {},
+  grid: {},
+  player: {},
+};
+
+// Initialize cached config from config object
+function initCachedConfig() {
+  if (config.waves) CONFIG.waves = config.waves;
+  if (config.enemies) CONFIG.enemies = config.enemies;
+  if (config.bunkers) CONFIG.bunkers = config.bunkers;
+  if (config.grid) CONFIG.grid = config.grid;
+  if (config.player) CONFIG.player = config.player;
+}
+
 // Helper: get cached player stats
-function getCachedPlayerStats(playerIds) {
+async function getCachedPlayerStats(playerIds) {
   const now = Date.now();
-  let cached = statsCache.get('mp_players');
-  
+  const cached = statsCache.get('mp_players');
+
   if (cached && now - cached.timestamp < STATS_CACHE_TTL) {
     return cached.data;
   }
-  
-  // Fetch fresh from Laravel
-  fetchAndCacheStats(playerIds);
-  return statsCache.get('mp_players').data;
+
+  return await fetchAndCacheStats(playerIds);
 }
 
-function fetchAndCacheStats(playerIds) {
+async function fetchAndCacheStats(playerIds) {
   const encodedIds = playerIds.join(',');
-  fetch(`${LARAVEL_API}/mp/lobby-players?player_ids=${encodedIds}`)
-    .then(res => res.json())
-    .then(data => {
-      statsCache.set('mp_players', { data, timestamp: now });
-    })
-    .catch(err => {
-      console.error('[cache] Failed to fetch stats:', err.message);
-    });
+  try {
+    const res = await fetch(`${LARAVEL_API}/mp/lobby-players?player_ids=${encodedIds}`);
+    const data = await res.json();
+    statsCache.set('mp_players', { data, timestamp: Date.now() });
+    return data;
+  } catch (err) {
+    console.error('[cache] Failed to fetch stats:', err.message);
+    return null;
+  }
 }
 
 // Helper: get cached group best
-function getCachedGroupBest(playerIds) {
+async function getCachedGroupBest(playerIds) {
   const now = Date.now();
-  let cached = groupBestCache.get(playerIds.sort().join(','));
-  
+  const key = playerIds.sort().join(',');
+  const cached = groupBestCache.get(key);
+
   if (cached && now - cached.timestamp < GROUP_BEST_CACHE_TTL) {
     return cached.data;
   }
-  
-  // Fetch fresh
-  fetch(`${LARAVEL_API}/mp/group-best?player_ids=${playerIds.sort().join(',')}`)
-    .then(res => res.json())
-    .then(data => {
-      const key = playerIds.sort().join(',');
-      groupBestCache.set(key, { data, timestamp: now });
-    })
-    .catch(err => {
-      console.error('[cache] Failed to fetch group best:', err.message);
-      return null;
+
+  try {
+    const res = await fetch(`${LARAVEL_API}/mp/group-best`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_ids: playerIds }),
     });
-  
-  return null;
+    const data = await res.json();
+    groupBestCache.set(key, { data, timestamp: now });
+    return data;
+  } catch (err) {
+    console.error('[cache] Failed to fetch group best:', err.message);
+    return null;
+  }
 }
 const SERVER_KEY = process.env.GAME_SERVER_KEY || '';
 
@@ -113,7 +127,6 @@ function censorProfanity(text) {
   return result;
 }
 
-const PORT = process.env.PORT || 3001;
 const server = http.createServer((req, res) => {
   // Health check endpoint
   if (req.url === '/health') {
@@ -373,6 +386,11 @@ io.on('connection', (socket) => {
 
   // Helper: set up game callbacks for a room
   function setupGameCallbacks(room) {
+    // Reset delta tracking for new game
+    if (room.game) {
+      room.game.resetDeltaTracking();
+    }
+
     room.game.onStateUpdate = (state) => {
       io.to(room.code).emit('game_state', state);
     };
@@ -722,6 +740,18 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// Load shared game config
+const configPath = path.join(__dirname, 'game-config.json');
+const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+// Set wanderer weights on Enemy prototype
+Enemy.setWandererWeights(config);
+
+// Initialize cached config
+initCachedConfig();
+
+const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`🏰 Impossible Tower Defense — Socket Server`);

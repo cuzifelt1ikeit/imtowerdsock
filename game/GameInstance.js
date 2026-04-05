@@ -213,6 +213,98 @@ const LEAST_KILLS_LINES = [
 
 const { Lane } = require('./Lane');
 
+// MARK: - Delta Encoding Helpers
+
+// Helper: create minimal state with only changed fields
+// previousState is passed in and returned to keep it per-instance
+function createDeltaState(currentState, previousState) {
+  if (!previousState) {
+    // First broadcast — send full state
+    return { state: currentState, prev: currentState };
+  }
+
+  const delta = {
+    roomId: currentState.roomId,
+    waveNumber: currentState.waveNumber,
+    sharedHp: currentState.sharedHp,
+    waveCountdown: currentState.waveCountdown,
+    allLanesActive: currentState.allLanesActive,
+    waitingForStart: currentState.waitingForStart,
+    lanes: {},
+  };
+
+  // Only include lanes that have changed
+  for (const [laneIndex, laneState] of Object.entries(currentState.lanes)) {
+    if (!previousState.lanes[laneIndex]) {
+      // New lane
+      delta.lanes[laneIndex] = laneState;
+    } else {
+      // Check for changes
+      const prevLane = previousState.lanes[laneIndex];
+      const changes = [];
+
+      if (prevLane.cash !== laneState.cash) changes.push('cash', laneState.cash);
+      if (prevLane.waveNumber !== laneState.waveNumber) changes.push('waveNumber', laneState.waveNumber);
+      if (prevLane.waveActive !== laneState.waveActive) changes.push('waveActive', laneState.waveActive);
+      if (prevLane.waveCountdown !== laneState.waveCountdown) changes.push('waveCountdown', laneState.waveCountdown);
+      if (prevLane.enemiesRemaining !== laneState.enemiesRemaining) changes.push('enemiesRemaining', laneState.enemiesRemaining);
+
+      // Check enemy changes (only if there are changes)
+      const prevEnemies = prevLane.enemies.map(e => ({
+        id: e.id,
+        alive: e.alive,
+        x: e.x,
+        y: e.y,
+        hp: e.hp,
+      }));
+      const currEnemies = laneState.enemies.map(e => ({
+        id: e.id,
+        alive: e.alive,
+        x: e.x,
+        y: e.y,
+        hp: e.hp,
+      }));
+
+      // Compare enemies by ID
+      const enemyChanges = new Set();
+      for (const curr of currEnemies) {
+        const prev = prevEnemies.find(p => p.id === curr.id);
+        if (!prev) {
+          // New enemy
+          enemyChanges.add('enemies', curr);
+        } else if (
+          prev.hp !== curr.hp ||
+          prev.x !== curr.x ||
+          prev.y !== curr.y
+        ) {
+          enemyChanges.add('enemies', curr);
+        }
+      }
+
+      // If no changes to this lane, skip it
+      if (changes.length === 0 && enemyChanges.size === 0) {
+        continue; // Skip unchanged lanes
+      }
+
+      delta.lanes[laneIndex] = {
+        cash: laneState.cash,
+        waveNumber: laneState.waveNumber,
+        waveActive: laneState.waveActive,
+        waveCountdown: laneState.waveCountdown,
+        enemiesRemaining: laneState.enemiesRemaining,
+        changes,
+      };
+
+      // Only include enemies if there are changes
+      if (enemyChanges.size > 0) {
+        delta.lanes[laneIndex].enemies = Array.from(enemyChanges);
+      }
+    }
+  }
+
+  return { state: delta, prev: structuredClone(currentState) };
+}
+
 class GameInstance {
   constructor(roomId, config) {
     this.roomId = roomId;
@@ -225,7 +317,7 @@ class GameInstance {
       },
       _mpStartWave: 5, // Waves 1-5 are skipped, start generating at wave 6 difficulty
     };
-    this.lanes = new Map(); // playerId -> Lane
+    this.lanes = new Map(); // playerId -> Lane (authoritative store)
     this.sharedHp = config.player.maxHp;
     this.maxHp = config.player.maxHp;
     this.gameOver = false;
@@ -237,6 +329,9 @@ class GameInstance {
     // Key: original enemy signature, Value: Set of playerIds it has visited
     this._leakTracker = new Map();
     this._leakId = 0;
+
+    // Per-instance delta state tracking (NOT module-level)
+    this._previousState = null;
 
     this._tickInterval = null;
     this._tickRate = 16; // ms (~60 ticks/sec)
@@ -252,6 +347,7 @@ class GameInstance {
     this._allLanesCleared = false;
     this._betweenWaveTimer = 0;
     this._waveQueued = false; // Flag: start wave on next tick
+    this._sendEarlyProcessed = false; // Guard against duplicate send_early
 
     // Callback for broadcasting state
     this.onStateUpdate = null;   // Full state (throttled ~10fps)
@@ -347,6 +443,7 @@ class GameInstance {
       if (allCleared && !this._allLanesCleared) {
         this._allLanesCleared = true;
         this._betweenWaveTimer = this.config.waves.betweenDuration;
+        this._sendEarlyProcessed = false;
 
         // Announce wave kill stats before resetting
         this._announceWaveStats();
@@ -381,11 +478,14 @@ class GameInstance {
       }
     }
 
-    // Broadcast state (throttled)
+    // Broadcast state (throttled with delta encoding)
     this._broadcastCounter++;
     if (this._broadcastCounter >= this._broadcastEvery && this.onStateUpdate) {
       this._broadcastCounter = 0;
-      this.onStateUpdate(this.getState());
+      const state = this.getState();
+      const { state: deltaState, prev } = createDeltaState(state, this._previousState);
+      this._previousState = prev;
+      this.onStateUpdate(deltaState);
     }
   }
 
@@ -449,6 +549,13 @@ class GameInstance {
               enemy.lastX = enemy.x;
               enemy.lastY = enemy.y;
               respawned = true;
+              if (this.onLaneEvent) {
+                this.onLaneEvent(pid, 'enemy_respawned', {
+                  enemyId: enemy.id,
+                  col: c,
+                  row: 0,
+                });
+              }
               console.log(`[stalled] Respawned ${enemy.type} (id:${enemy.id}) to top of lane ${pid} at col ${c}`);
               break;
             }
@@ -529,6 +636,16 @@ class GameInstance {
       const leakDamage = this.config.enemies[enemy.type].leakDamage;
       this.sharedHp = Math.max(0, this.sharedHp - leakDamage);
       this._leakTracker.delete(leakKey);
+
+      // Immediately broadcast leak damage so clients update HP without waiting for next tick
+      if (this.onLaneEvent) {
+        this.onLaneEvent(fromPlayerId, 'leak_damage', {
+          enemyType: enemy.type,
+          damage: leakDamage,
+          sharedHp: Math.round(this.sharedHp),
+          maxHp: this.maxHp,
+        });
+      }
     }
   }
 
@@ -579,11 +696,14 @@ class GameInstance {
         if (this._waitingForFirstWave) {
           this._waitingForFirstWave = false;
           this._waveQueued = true;
+          this._sendEarlyProcessed = true;
           console.log(`[wave] Game started by player ${playerId}`);
           return { success: true, bonus: 0 };
         }
         // Between waves — skip countdown, bonus to ALL + $25 extra to the grabber
-        if (this._betweenWaveTimer > 0) {
+        // Guard against multiple players sending early in the same countdown
+        if (this._betweenWaveTimer > 0 && !this._sendEarlyProcessed) {
+          this._sendEarlyProcessed = true;
           const bonus = Math.round(this._betweenWaveTimer * this.config.waves.earlyBonusPerSecond);
           const grabberBonus = 25;
           this._betweenWaveTimer = 0;
@@ -595,8 +715,9 @@ class GameInstance {
             }
           }
           // Extra $25 to whoever grabbed it
-          lane.cash += grabberBonus;
-          lane.totalEarned += grabberBonus;
+          const grabberLane = this.lanes.get(playerId);
+          grabberLane.cash += grabberBonus;
+          grabberLane.totalEarned += grabberBonus;
 
           // Announce in chat
           const playerInfo = this._getPlayerUsername(playerId);
@@ -677,6 +798,10 @@ class GameInstance {
 
   get playerCount() {
     return this.lanes.size;
+  }
+
+  resetDeltaTracking() {
+    this._previousState = null;
   }
 }
 

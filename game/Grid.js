@@ -9,11 +9,29 @@ const CellType = {
 // MARK: - Grid
 // Direct port of Grid.swift — 2D grid with A* pathfinding.
 class Grid {
-  constructor(cols, rows) {
+  constructor(cols, rows, useWorker = false) {
     this.cols = cols;
     this.rows = rows;
     this.cells = [];
     this._initCells();
+    this.useWorker = useWorker;
+    this.worker = null;
+
+    // Setup worker if enabled
+    if (useWorker) {
+      try {
+        this.worker = new Worker('./pathfinding-worker.js');
+        this.worker.onmessage = (e) => {
+          const { type, path } = e.data;
+          if (type === 'path_found' || type === 'no_path') {
+            this._onPathResult(path);
+          }
+        };
+      } catch (err) {
+        console.log('[Grid] Pathfinding worker failed to load, falling back to synchronous:', err.message);
+        this.useWorker = false;
+      }
+    }
   }
 
   _initCells() {

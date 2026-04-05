@@ -10,7 +10,7 @@ class Lane {
     this.playerId = playerId;
     this.config = config;
     this.grid = new Grid(config.grid.cols, config.grid.rows);
-    this.waveManager = new WaveManager(this.grid, config);
+    this.waveManager = new WaveManager(this.grid, config, this._enemyPool);
     this.bunkerManager = new BunkerManager();
     this.cash = config.player.startCash;
     this.totalEarned = 0;
@@ -21,6 +21,28 @@ class Lane {
     this.troopsPurchased = { mg: 0, sg: 0, sn: 0, ft: 0 };
     this.troopsUpgraded = { mg: 0, sg: 0, sn: 0, ft: 0 };
     this.currentBounty = 10;
+    this._gridDirty = true; // Only send grid when it changes
+
+    // Enemy object pool — pre-allocate to reduce GC pressure
+    // Pool size: max enemies per wave + 10% buffer
+    const maxEnemies = Math.max(50, config.enemies.maxSpawn * 2);
+    this._enemyPool = [];
+    this._spawnEnemies = 0;
+
+    // Pre-allocate enemy objects in pool
+    for (let i = 0; i < maxEnemies; i++) {
+      const poolIndex = i % maxEnemies;
+      const enemy = new Enemy(
+        0, // placeholder col
+        0, // placeholder row
+        1, // dummy hp
+        1, // dummy speed
+        'grunt', // dummy type
+        false // dummy isPathfinder
+      );
+      enemy._idle = true; // Mark as available for pooling
+      this._enemyPool[poolIndex] = enemy;
+    }
 
     // Callbacks set by GameInstance
     this.onEnemyEscaped = null;
@@ -58,6 +80,47 @@ class Lane {
     this.waveManager.onWaveCleared = () => {};
   }
 
+  // MARK: - Enemy Pool Management
+
+  // Get an enemy from the pool or create a new one
+  _getEnemy() {
+    // Reuse an idle enemy from pool
+    const poolIndex = this._spawnEnemies % this._enemyPool.length;
+    const enemy = this._enemyPool[poolIndex];
+
+    if (enemy && enemy._idle) {
+      // Reset enemy to idle state
+      enemy.alive = true;
+      enemy.path = [];
+      enemy.pathIndex = 0;
+      enemy.dots = [];
+      enemy.hitFlash = 0;
+      enemy.wanderTimer = 0;
+      enemy.stuckTimer = 0;
+      enemy._leakKey = null;
+      enemy._idle = false;
+      return enemy;
+    }
+
+    // Pool exhausted or enemy not available — create new enemy
+    return new Enemy(
+      this.waveManager.spawnQueue[0].col,
+      this.waveManager.spawnQueue[0].row,
+      this.config.enemies[this.waveManager.spawnQueue[0].type].hp,
+      this.config.enemies[this.waveManager.spawnQueue[0].type].speed,
+      this.waveManager.spawnQueue[0].type
+    );
+  }
+
+  // Return an enemy to the pool when it dies
+  _returnEnemy(enemy) {
+    enemy.alive = false;
+    enemy.deathHandled = true;
+    this._spawnEnemies++;
+    // Mark enemy as idle again
+    enemy._idle = true;
+  }
+
   update(dt) {
     this.waveManager.update(dt);
     this.bunkerManager.update(dt, this.waveManager.enemies);
@@ -75,6 +138,7 @@ class Lane {
 
     if (!this.grid.tryPlace(col, row)) return { success: false, reason: 'invalid_placement' };
 
+    this._gridDirty = true;
     this.cash -= this.config.player.bunkerCost;
     this.bunkersBuilt++;
     this.bunkerManager.addBunker(col, row);
@@ -129,7 +193,7 @@ class Lane {
   }
 
   toState() {
-    return {
+    const state = {
       playerId: this.playerId,
       cash: this.cash,
       waveNumber: this.waveManager.waveNumber,
@@ -138,10 +202,15 @@ class Lane {
       enemiesRemaining: this.waveManager.enemiesRemaining,
       enemies: this.waveManager.enemies.filter(e => e.alive).map(e => e.toState()),
       bunkers: this.bunkerManager.allBunkers.map(b => b.toState()),
-      grid: this.grid.cells,
       totalKills: this.totalKills,
       totalLeaked: this.totalLeaked,
     };
+    // Only include grid when it has changed (bunker placement) to save bandwidth
+    if (this._gridDirty) {
+      state.grid = this.grid.cells;
+      this._gridDirty = false;
+    }
+    return state;
   }
 }
 

@@ -4,9 +4,10 @@
 const { Enemy } = require('./Enemy');
 
 class WaveManager {
-  constructor(grid, config) {
+  constructor(grid, config, enemyPool = null) {
     this.grid = grid;
     this.config = config;
+    this.enemyPool = enemyPool || null; // Optional pool for object pooling
     this.enemies = [];
     this.waveNumber = 0;
     this.waveActive = false;
@@ -78,6 +79,10 @@ class WaveManager {
         if (this.onEnemyEscaped) this.onEnemyEscaped(enemy);
       } else if (!enemy.alive) {
         enemy.deathHandled = true;
+        // Return enemy to pool if available
+        if (this.enemyPool && this.enemyPool._returnEnemy) {
+          this.enemyPool._returnEnemy(enemy);
+        }
         if (this.onEnemyKilled) this.onEnemyKilled(enemy);
       }
     }
@@ -89,7 +94,14 @@ class WaveManager {
         this.waveActive = false;
         this.waveCleared = true;
         this.betweenWaveTimer = this.betweenWaveDuration;
-        // Clean up dead enemies between waves
+        // Clean up dead enemies between waves and return them to pool
+        for (const enemy of this.enemies) {
+          if (!enemy.alive) {
+            if (this.enemyPool && this.enemyPool._returnEnemy) {
+              this.enemyPool._returnEnemy(enemy);
+            }
+          }
+        }
         this.enemies = [];
         if (this.onWaveCleared) this.onWaveCleared(this.waveNumber);
       }
@@ -176,7 +188,14 @@ class WaveManager {
   _spawnEnemy(data) {
     const spawnCol = Math.floor(Math.random() * this.grid.cols);
     const id = this._nextEnemyId++;
-    const enemy = new Enemy(id, spawnCol, 0, data.hp, data.speed, data.type, data.isPathfinder, this.config);
+
+    // Use pooled enemy if available, otherwise create new one
+    let enemy;
+    if (this.enemyPool && this.enemyPool._getEnemy) {
+      enemy = this.enemyPool._getEnemy();
+    } else {
+      enemy = new Enemy(id, spawnCol, 0, data.hp, data.speed, data.type, data.isPathfinder, this.config);
+    }
 
     if (data.isPathfinder) {
       let path = this.grid.findPath(spawnCol, 0, null);
@@ -239,7 +258,15 @@ class WaveManager {
     }
     if (!path || path.length < 2) return; // No valid path at all
 
-    const enemy = new Enemy(id, spawnCol, 0, enemyData.hp, enemyData.speed, enemyData.type, true, this.config);
+    // Use pooled enemy if available
+    let enemy;
+    if (this.enemyPool && this.enemyPool._getEnemy) {
+      enemy = this.enemyPool._getEnemy();
+    } else {
+      const enemyCfg = this.config.enemies[enemyData.type];
+      enemy = new Enemy(id, spawnCol, 0, enemyData.hp, enemyData.speed, enemyData.type, true, this.config);
+    }
+
     if (enemyData._leakKey) {
       enemy._leakKey = enemyData._leakKey;
     }
