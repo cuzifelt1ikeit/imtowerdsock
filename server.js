@@ -8,9 +8,6 @@ const fs = require('fs');
 const path = require('path');
 const { RoomManager } = require('./game/RoomManager');
 const { Enemy } = require('./game/Enemy');
-const compression = require('compression');
-
-// Server created below after config and helpers are defined
 
 // Laravel API config (use localhost if same VPS, otherwise external URL)
 const IS_LOCALHOST = process.env.LARAVEL_API_URL === undefined;
@@ -126,6 +123,18 @@ function censorProfanity(text) {
   }
   return result;
 }
+
+// Load shared game config (must be before server setup)
+const configPath = path.join(__dirname, 'game-config.json');
+const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+// Set wanderer weights on Enemy prototype
+Enemy.setWandererWeights(config);
+
+// Initialize cached config
+initCachedConfig();
+
+const PORT = process.env.PORT || 3001;
 
 const server = http.createServer((req, res) => {
   // Health check endpoint
@@ -740,18 +749,6 @@ io.on('connection', (socket) => {
     }
   });
 });
-
-// Load shared game config
-const configPath = path.join(__dirname, 'game-config.json');
-const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-// Set wanderer weights on Enemy prototype
-Enemy.setWandererWeights(config);
-
-// Initialize cached config
-initCachedConfig();
-
-const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`🏰 Impossible Tower Defense — Socket Server`);
