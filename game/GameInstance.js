@@ -810,6 +810,7 @@ class GameInstance {
   getResults() {
     const players = {};
     for (const [pid, lane] of this.lanes) {
+      const path = lane.grid.getCurrentPath();
       players[pid] = {
         totalKills: lane.totalKills,
         totalLeaked: lane.totalLeaked,
@@ -817,6 +818,7 @@ class GameInstance {
         bunkersBuilt: lane.bunkersBuilt,
         troopsPurchased: lane.troopsPurchased,
         troopsUpgraded: lane.troopsUpgraded,
+        mazeLength: path ? path.length : 0,
       };
     }
 

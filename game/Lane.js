@@ -21,7 +21,7 @@ class Lane {
     this.troopsPurchased = { mg: 0, sg: 0, sn: 0, ft: 0 };
     this.troopsUpgraded = { mg: 0, sg: 0, sn: 0, ft: 0 };
     this.currentBounty = 10;
-    this._gridDirty = true; // Only send grid when it changes
+    this._gridDirty = true;
 
     // Enemy object pool — pre-allocate to reduce GC pressure
     // Pool size: max enemies per wave + 10% buffer
@@ -206,6 +206,9 @@ class Lane {
       grid: this.grid.cells,
       totalKills: this.totalKills,
       totalLeaked: this.totalLeaked,
+      totalEarned: this.totalEarned,
+      bunkersBuilt: this.bunkersBuilt,
+      mazeLength: (this.grid.getCurrentPath() || []).length,
     };
   }
 }
